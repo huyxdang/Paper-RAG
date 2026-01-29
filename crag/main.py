@@ -3,6 +3,16 @@ CRAG Main Entry Point and Example Usage.
 
 Demonstrates how to use the Corrective RAG workflow with Pinecone hybrid search.
 All LLM operations use Mistral Large.
+
+Usage (From the repo root):
+
+    python -m crag.main --question "What is GPT-4's MMLU score?"
+
+(Full demo)
+    python -m crag.main --mode demo
+
+(Interactive mode)
+    python -m crag.main --mode interactive
 """
 
 import os
@@ -105,7 +115,7 @@ MMLU is considered one of the most comprehensive benchmarks for evaluating broad
             id="doc_mmlu"
         ),
     ]
-
+    
 
 def get_retriever(use_pinecone: bool = True, index_name: str = "crag-demo"):
     """
@@ -240,6 +250,8 @@ def interactive_mode(use_pinecone: bool = False):
             print(f"Route: {result['route_decision']}")
             print(f"Documents used: {len(result['documents'])}")
             print(f"Generation attempts: {result['generation_attempts']}")
+            print(f"Generation grade: {result.get('generation_grade', 'N/A')}")
+            print(f"Web search done: {result.get('web_search_done', False)}")
             print("-" * 40 + "\n")
             
         except KeyboardInterrupt:

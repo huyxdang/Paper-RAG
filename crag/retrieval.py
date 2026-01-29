@@ -65,6 +65,7 @@ class PineconeHybridRetriever:
         sparse_alpha: float = 0.5,
         dimension: int = 1024,  # mistral-embed dimension
         create_index: bool = True,
+        bm25_path: Optional[str] = None,
     ):
         """
         Initialize Pinecone hybrid retriever.
@@ -76,12 +77,14 @@ class PineconeHybridRetriever:
             sparse_alpha: Weight for sparse vs dense (0=dense only, 1=sparse only)
             dimension: Embedding dimension (1024 for mistral-embed)
             create_index: Whether to create index if it doesn't exist
+            bm25_path: Path to persisted BM25 encoder (default: {index_name}_bm25.pkl)
         """
         self.index_name = index_name
         self.namespace = namespace
         self.dense_model = dense_model
         self.sparse_alpha = sparse_alpha
         self.dimension = dimension
+        self.bm25_path = bm25_path or f"{index_name}_bm25.pkl"
         
         # Lazy-init clients
         self._pinecone = None
@@ -119,10 +122,17 @@ class PineconeHybridRetriever:
         return self._mistral
     
     def _get_sparse_encoder(self):
-        """Get or create sparse encoder (BM25)."""
+        """Get or create sparse encoder (BM25). Loads from persisted file if available."""
         if self._sparse_encoder is None:
             from pinecone_text.sparse import BM25Encoder
-            self._sparse_encoder = BM25Encoder.default()
+            
+            # Try loading persisted encoder first (preserves IDF from training corpus)
+            if os.path.exists(self.bm25_path):
+                print(f"Loading BM25 encoder from {self.bm25_path}")
+                self._sparse_encoder = BM25Encoder.load(self.bm25_path)
+            else:
+                self._sparse_encoder = BM25Encoder.default()
+        
         return self._sparse_encoder
     
     def _ensure_index(self):
@@ -219,7 +229,9 @@ class PineconeHybridRetriever:
             encoder = self._get_sparse_encoder()
             corpus_texts = [doc.content for doc in documents]
             encoder.fit(corpus_texts)
-            print("BM25 encoder fitted")
+            # Persist encoder to ensure query-time IDF matches index-time IDF
+            encoder.dump(self.bm25_path)
+            print(f"BM25 encoder fitted and saved to {self.bm25_path}")
         
         # Get all dense embeddings
         print(f"Computing dense embeddings for {len(documents)} documents...")

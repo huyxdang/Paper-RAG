@@ -4,12 +4,13 @@ Corrective RAG (CRAG) with Hybrid Search using LangGraph.
 A stateful RAG workflow that:
 1. Routes queries to vectorstore or web search
 2. Performs hybrid retrieval via Pinecone (BM25 + Semantic)
-3. Grades document relevance with Mistral Large
+3. Grades document relevance with Mistral Large (batch mode)
 4. Falls back to web search if context is insufficient
-5. Validates generation for hallucinations and usefulness
+5. Validates generation for hallucinations and usefulness (single LLM call)
 
 All LLM operations use Mistral Large (mistral-large-latest).
 Vector storage uses Pinecone with persistent hybrid search.
+Uses closure pattern for dependency injection - no global state.
 
 Usage:
     >>> from crag import run_crag, PineconeHybridRetriever, Document
@@ -27,7 +28,7 @@ Usage:
     ... ]
     >>> retriever.add_documents(docs)
     >>> 
-    >>> # Run CRAG (uses persistent Pinecone index)
+    >>> # Run CRAG (retriever is required)
     >>> result = run_crag("What is GPT-4's MMLU score?", retriever=retriever)
     >>> print(result["generation"])
 """
@@ -41,12 +42,20 @@ from .retrieval import (
 )
 from .graders import (
     QueryRouter,
+    QueryRewriter,
     DocumentGrader,
-    HallucinationGrader,
-    AnswerGrader,
+    DocumentReranker,
     GenerationGrader,
+    GradeGeneration,
+    GradeDocumentsBatch,
+    RewrittenQuery,
     DEFAULT_MODEL,
+    ROUTER_MODEL,
+    REWRITER_MODEL,
+    DOC_GRADER_MODEL,
+    GEN_GRADER_MODEL,
 )
+from .graph_state import Message
 from .graph import (
     create_crag_graph,
     compile_crag_graph,
@@ -57,6 +66,7 @@ from .graph import (
 __all__ = [
     # State
     "GraphState",
+    "Message",
     # Retrieval
     "Document",
     "HybridRetriever",
@@ -64,11 +74,18 @@ __all__ = [
     "InMemoryHybridRetriever",
     # Graders
     "QueryRouter",
+    "QueryRewriter",
     "DocumentGrader",
-    "HallucinationGrader",
-    "AnswerGrader",
+    "DocumentReranker",
     "GenerationGrader",
+    "GradeGeneration",
+    "GradeDocumentsBatch",
+    "RewrittenQuery",
     "DEFAULT_MODEL",
+    "ROUTER_MODEL",
+    "REWRITER_MODEL",
+    "DOC_GRADER_MODEL",
+    "GEN_GRADER_MODEL",
     # Graph
     "create_crag_graph",
     "compile_crag_graph",
