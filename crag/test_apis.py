@@ -12,8 +12,14 @@ Usage:
     python -m crag.test_apis --component doc_grader
     python -m crag.test_apis --component reranker
     python -m crag.test_apis --component gen_grader
-    python -m crag.test_apis --component retriever
+    python -m crag.test_apis --component retriever_memory
+    python -m crag.test_apis --component retriever_pinecone
+    python -m crag.test_apis --component web_search
     python -m crag.test_apis --component full_pipeline
+    python -m crag.test_apis --component pipeline_history
+    
+    # List all available tests
+    python -m crag.test_apis --list
 """
 
 import os
@@ -147,7 +153,7 @@ def test_document_grader() -> TestResult:
         return TestResult(name, False, "Failed to grade documents", str(e))
 
 
-def test_document_reranker_cohere() -> TestResult:
+def test_document_reranker() -> TestResult:
     """Test DocumentReranker with Cohere API."""
     name = "DocumentReranker (Cohere)"
     
@@ -158,7 +164,7 @@ def test_document_reranker_cohere() -> TestResult:
         from crag.graders import DocumentReranker
         from crag.retrieval import Document
         
-        reranker = DocumentReranker(backend="cohere")
+        reranker = DocumentReranker()
         
         docs = [
             Document(content="The weather is nice today.", score=0.9),
@@ -183,37 +189,6 @@ def test_document_reranker_cohere() -> TestResult:
         )
     except Exception as e:
         return TestResult(name, False, "Failed to rerank with Cohere", str(e))
-
-
-def test_document_reranker_crossencoder() -> TestResult:
-    """Test DocumentReranker with local CrossEncoder."""
-    name = "DocumentReranker (CrossEncoder)"
-    
-    try:
-        from crag.graders import DocumentReranker
-        from crag.retrieval import Document
-        
-        reranker = DocumentReranker(backend="cross-encoder")
-        
-        docs = [
-            Document(content="The weather is nice today.", score=0.9),
-            Document(content="GPT-4 achieved 86.4% on MMLU benchmark evaluation.", score=0.5),
-            Document(content="Paris is the capital of France.", score=0.8),
-        ]
-        
-        reranked = reranker.rerank(docs, "What is GPT-4's MMLU score?", top_k=2)
-        
-        assert len(reranked) == 2, f"Should return 2 docs, got {len(reranked)}"
-        
-        return TestResult(
-            name, 
-            True, 
-            f"Reranked {len(docs)} → {len(reranked)} docs, top score: {reranked[0].score:.3f}"
-        )
-    except ImportError as e:
-        return TestResult(name, False, "sentence-transformers not installed", str(e))
-    except Exception as e:
-        return TestResult(name, False, "Failed to rerank with CrossEncoder", str(e))
 
 
 def test_generation_grader() -> TestResult:
@@ -451,8 +426,7 @@ ALL_TESTS = {
     "router": test_query_router,
     "rewriter": test_query_rewriter,
     "doc_grader": test_document_grader,
-    "reranker_cohere": test_document_reranker_cohere,
-    "reranker_crossencoder": test_document_reranker_crossencoder,
+    "reranker": test_document_reranker,
     "gen_grader": test_generation_grader,
     "retriever_memory": test_inmemory_retriever,
     "retriever_pinecone": test_pinecone_retriever,
