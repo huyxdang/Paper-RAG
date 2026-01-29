@@ -3,3 +3,5 @@ venv
 data/
 downloads/
 crag/_pycache/
+neurips_2025.csv
+NeurIPS_2025_PDFs/
