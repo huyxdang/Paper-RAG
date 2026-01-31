@@ -3,7 +3,6 @@
 
 import argparse
 import json
-import os
 import re
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -13,173 +12,157 @@ import pandas as pd
 import requests
 from tqdm import tqdm
 
-# --- DEFAULTS ---
+# Defaults
 DEFAULT_CSV = "neurips_2025.csv"
-DEFAULT_OUTPUT_DIR = "NeurIPS_2025_PDFs"
+DEFAULT_OUTPUT_DIR = "papers"
 DEFAULT_WORKERS = 10
 DEFAULT_TIMEOUT = 30
 FAILED_LOG = "download_failures.json"
+MIN_FILE_SIZE = 1000  # bytes
 
 
-def clean_filename(title: str) -> str:
+def clean_filename(title: str, max_len: int = 150) -> str:
+    """Sanitize title for use as filename."""
     clean = re.sub(r'[^a-zA-Z0-9 \-_]', '', str(title))
-    return clean.replace(' ', '_')[:150]
+    return clean.replace(' ', '_')[:max_len]
 
 
-def load_failures(log_path: str) -> dict:
-    if os.path.exists(log_path):
-        with open(log_path, 'r') as f:
-            return json.load(f)
+def load_failures(path: Path) -> dict:
+    """Load previously failed downloads."""
+    if path.exists():
+        return json.loads(path.read_text())
     return {}
 
 
-def save_failures(log_path: str, failures: dict) -> None:
-    with open(log_path, 'w') as f:
-        json.dump(failures, f, indent=2)
+def save_failures(path: Path, failures: dict) -> None:
+    """Save failed downloads."""
+    path.write_text(json.dumps(failures, indent=2))
 
 
-def download_paper(row: dict, output_dir: str, timeout: int, max_retries: int = 3, force: bool = False) -> tuple[str, bool, str]:
-    """Download a single paper with retries. Returns: (note_id, success, error_message)"""
-    note_id = row['note_id']
-    title = row['title']
+def download_paper(
+    note_id: str,
+    title: str,
+    output_dir: Path,
+    timeout: int,
+    max_retries: int = 3,
+    force: bool = False
+) -> tuple[str, bool, str]:
+    """Download a single paper. Returns (note_id, success, error)."""
+    filepath = output_dir / f"{clean_filename(title)}.pdf"
     
-    pdf_url = f"https://openreview.net/pdf?id={note_id}"
-    filename = f"{clean_filename(title)}.pdf"
-    filepath = os.path.join(output_dir, filename)
-    
-    # Skip if already exists and has content (unless force mode)
-    if not force and os.path.exists(filepath) and os.path.getsize(filepath) > 1000:
+    # Skip if exists (unless force)
+    if not force and filepath.exists() and filepath.stat().st_size > MIN_FILE_SIZE:
         return (note_id, True, "")
     
+    url = f"https://openreview.net/pdf?id={note_id}"
     last_error = ""
+    
     for attempt in range(max_retries):
         try:
-            response = requests.get(pdf_url, stream=True, timeout=timeout)
-            if response.status_code == 200:
-                # Check content type
-                content_type = response.headers.get('content-type', '')
-                if 'pdf' not in content_type.lower() and 'octet-stream' not in content_type.lower():
-                    last_error = f"Not a PDF (content-type: {content_type})"
+            resp = requests.get(url, stream=True, timeout=timeout)
+            
+            if resp.status_code == 200:
+                content_type = resp.headers.get('content-type', '').lower()
+                if 'pdf' not in content_type and 'octet-stream' not in content_type:
+                    last_error = f"Not PDF: {content_type}"
                     continue
                 
-                with open(filepath, 'wb') as f:
-                    for chunk in response.iter_content(chunk_size=8192):
-                        f.write(chunk)
+                filepath.write_bytes(resp.content)
                 
-                # Verify file size (PDFs should be at least a few KB)
-                if os.path.getsize(filepath) < 1000:
-                    os.remove(filepath)
-                    last_error = "Downloaded file too small (likely error page)"
+                if filepath.stat().st_size < MIN_FILE_SIZE:
+                    filepath.unlink()
+                    last_error = "File too small"
                     continue
-                    
+                
                 return (note_id, True, "")
-            elif response.status_code == 429:
-                # Rate limited - wait and retry
-                wait_time = 5 * (attempt + 1)
-                time.sleep(wait_time)
-                last_error = f"Rate limited (429), waited {wait_time}s"
+            
+            elif resp.status_code == 429:
+                wait = 5 * (attempt + 1)
+                time.sleep(wait)
+                last_error = f"Rate limited, waited {wait}s"
             else:
-                last_error = f"HTTP {response.status_code}"
+                last_error = f"HTTP {resp.status_code}"
+                
         except requests.Timeout:
             last_error = "Timeout"
-        except requests.ConnectionError as e:
-            last_error = f"Connection error: {e}"
+        except requests.ConnectionError:
+            last_error = "Connection error"
         except Exception as e:
             last_error = str(e)
         
-        # Wait before retry
         if attempt < max_retries - 1:
-            time.sleep(1 * (attempt + 1))
+            time.sleep(attempt + 1)
     
     return (note_id, False, last_error)
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Download NeurIPS PDFs with resume support")
-    parser.add_argument("--csv", default=DEFAULT_CSV, help="Path to CSV file")
-    parser.add_argument("--output", "-o", default=DEFAULT_OUTPUT_DIR, help="Output directory")
-    parser.add_argument("--workers", "-w", type=int, default=DEFAULT_WORKERS, help="Parallel workers")
-    parser.add_argument("--timeout", "-t", type=int, default=DEFAULT_TIMEOUT, help="Request timeout (seconds)")
-    parser.add_argument("--limit", "-n", type=int, help="Only download first N papers (for testing)")
-    parser.add_argument("--retry-failed", action="store_true", help="Only retry previously failed downloads")
-    parser.add_argument("--retries", type=int, default=3, help="Max retries per paper")
-    parser.add_argument("--failures-log", default=FAILED_LOG, help="Path to failures log file")
-    parser.add_argument("--force", action="store_true", help="Re-download all papers (ignore existing files)")
+    parser = argparse.ArgumentParser(description="Download NeurIPS PDFs")
+    parser.add_argument("--csv", default=DEFAULT_CSV)
+    parser.add_argument("--output", "-o", default=DEFAULT_OUTPUT_DIR)
+    parser.add_argument("--workers", "-w", type=int, default=DEFAULT_WORKERS)
+    parser.add_argument("--timeout", "-t", type=int, default=DEFAULT_TIMEOUT)
+    parser.add_argument("--limit", "-n", type=int, help="Download first N only")
+    parser.add_argument("--retry-failed", action="store_true")
+    parser.add_argument("--retries", type=int, default=3)
+    parser.add_argument("--force", action="store_true")
     args = parser.parse_args()
     
-    # Create output directory
-    os.makedirs(args.output, exist_ok=True)
+    output_dir = Path(args.output)
+    output_dir.mkdir(exist_ok=True)
+    failures_path = Path(FAILED_LOG)
     
-    # Load CSV
+    # Load data
     df = pd.read_csv(args.csv)
-    rows = df.to_dict('records')
+    papers = [(r['note_id'], r['title']) for _, r in df.iterrows()]
+    failures = load_failures(failures_path)
     
-    # Load previous failures
-    failures = load_failures(args.failures_log)
-    
-    total_papers = len(rows)
-    
+    # Filter
     if args.retry_failed:
-        # Only retry previously failed papers
-        failed_ids = set(failures.keys())
-        rows = [r for r in rows if r['note_id'] in failed_ids]
-        print(f"Retrying {len(rows)} previously failed downloads...")
-    elif args.force:
-        print(f"Force mode: re-downloading all {len(rows)} papers...")
-    else:
-        # Filter out already downloaded papers (auto-resume)
-        already_downloaded = set()
-        for r in rows:
-            filepath = os.path.join(args.output, f"{clean_filename(r['title'])}.pdf")
-            if os.path.exists(filepath) and os.path.getsize(filepath) > 1000:
-                already_downloaded.add(r['note_id'])
-        
-        rows = [r for r in rows if r['note_id'] not in already_downloaded]
-        
-        if already_downloaded:
-            print(f"Resuming: {len(already_downloaded)}/{total_papers} already downloaded")
-        else:
-            print(f"Starting fresh: {total_papers} papers to download")
+        papers = [(nid, t) for nid, t in papers if nid in failures]
+        print(f"Retrying {len(papers)} failed...")
+    elif not args.force:
+        already = {nid for nid, t in papers 
+                   if (output_dir / f"{clean_filename(t)}.pdf").exists()}
+        papers = [(nid, t) for nid, t in papers if nid not in already]
+        if already:
+            print(f"Resuming: {len(already)} already downloaded")
     
-    # Apply limit
     if args.limit:
-        rows = rows[:args.limit]
+        papers = papers[:args.limit]
     
-    if not rows:
+    if not papers:
         print("Nothing to download!")
         return
     
-    print(f"Downloading {len(rows)} papers with {args.workers} workers...")
+    print(f"Downloading {len(papers)} papers ({args.workers} workers)...")
     
+    success = 0
     new_failures = {}
-    success_count = 0
     
     with ThreadPoolExecutor(max_workers=args.workers) as executor:
         futures = {
-            executor.submit(download_paper, row, args.output, args.timeout, args.retries, args.force): row
-            for row in rows
+            executor.submit(download_paper, nid, title, output_dir, 
+                          args.timeout, args.retries, args.force): nid
+            for nid, title in papers
         }
         
-        with tqdm(total=len(rows), desc="Downloading") as pbar:
+        with tqdm(total=len(papers)) as pbar:
             for future in as_completed(futures):
-                note_id, success, error = future.result()
-                if success:
-                    success_count += 1
-                    # Remove from failures if it was there
-                    failures.pop(note_id, None)
+                nid, ok, err = future.result()
+                if ok:
+                    success += 1
+                    failures.pop(nid, None)
                 else:
-                    new_failures[note_id] = error
-                    failures[note_id] = error
+                    new_failures[nid] = err
+                    failures[nid] = err
                 pbar.update(1)
     
-    # Save updated failures
-    save_failures(args.failures_log, failures)
+    save_failures(failures_path, failures)
     
-    # Summary
-    print(f"\nDone! {success_count}/{len(rows)} successful")
+    print(f"\nDone! {success}/{len(papers)} successful")
     if new_failures:
-        print(f"Failed: {len(new_failures)} papers (logged to {args.failures_log})")
-        print("Run with --retry-failed to retry them")
+        print(f"Failed: {len(new_failures)} (see {FAILED_LOG})")
 
 
 if __name__ == "__main__":
