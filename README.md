@@ -35,7 +35,7 @@ PaperRAG is a production-ready Retrieval-Augmented Generation (RAG) system that 
 
 Implements **Adaptive RAG** ([paper](https://arxiv.org/pdf/2403.14403)), **Corrective RAG** ([paper](https://arxiv.org/pdf/2401.15884)), and **Self-RAG** ([paper](https://arxiv.org/pdf/2310.11511)), orchestrated with LangGraph. 
 
-Powered by **Mistral models** (Mistral Large, Mistral Small, Ministral 3B, Mistral Embed), Cohere (Re-ranker) and Tavily (Web-search).
+Powered by **Mistral models** (Mistral Large, Mistral Small 3.2, Ministral 3B, Mistral Embed), Cohere (Re-ranker) and Tavily (Web-search).
 
 ## RAG Flow
 
