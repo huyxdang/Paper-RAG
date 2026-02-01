@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="public/Paper-Rag-logo.png" alt="PaperRAG Logo" width="400"/>
+  <img src="public/Paper-Rag-logo.png" alt="PaperRAG Logo" width="280"/>
 </p>
 
 <h1 align="center">PaperRAG</h1>
@@ -9,11 +9,12 @@
 </p>
 
 <p align="center">
-  <a href="#architecture">Architecture</a> •
-  <a href="#features">Features</a> •
+  <a href="#overview">Overview</a> •
+  <a href="#corrective-rag-flow">Corrective RAG Flow</a> •
+  <a href="#pipeline-flow">Pipeline Flow</a> •
   <a href="#tech-stack">Tech Stack</a> •
-  <a href="#getting-started">Getting Started</a> •
-  <a href="#deployment">Deployment</a>
+  <a href="#project-structure">Project Structure</a> •
+  <a href="#license">License</a>
 </p>
 
 ---
@@ -22,9 +23,9 @@
 
 PaperRAG is a production-ready Retrieval-Augmented Generation (RAG) system that enables conversational exploration of ~6,000 NeurIPS 2025 research papers. It implements a **Corrective RAG (CRAG)** architecture with intelligent query routing, hybrid search, document grading.
 
-It is powered by **Mistral** models (Mistral Large, Mistral Small, Ministral 3B, Mistral Embed), Cohere (Re-ranker) and Tavily (Web-search). The RAG workflow was orchestrated with LangGraph.
+It is powered by **Mistral** models (Mistral Large, Mistral Small, Ministral 3B, Mistral Embed), Cohere (Re-ranker) and Tavily (Web-search). The RAG flow was orchestrated with LangGraph.
 
-## CRAG Architecture
+## Corrective RAG Flow
 
 ```mermaid
 flowchart TD
