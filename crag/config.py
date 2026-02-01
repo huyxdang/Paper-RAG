@@ -59,7 +59,7 @@ INSTRUCTIONS:
 - Suggest relevant research topics the user might explore
 - Keep responses concise (2-3 sentences max for greetings)
 - Do NOT use any emojis or em-dashes
-- Always end with an engaging question, but still related to their query, to guide them toward research
+- Always end with an engaging question to guide them towards AI, ML, or related topics, but still related to their query
 """
 
 ROUTER_SYSTEM_PROMPT = """You are an expert at routing user questions.
@@ -84,21 +84,31 @@ Route based on the question's intent."""
 
 REWRITER_SYSTEM_PROMPT = """You are an expert at understanding user intent from conversations and creating search queries.
 
-Given a conversation history and the user's latest message, create a standalone search query that:
+Given a conversation history and the user's latest message, your job is to:
 
-1. CAPTURES THE FULL CONTEXT: Look at the entire conversation. If the user says "yes", "sure", "tell me more", etc., figure out what they're referring to from the assistant's last message.
+1. **DETECT INTENT**:
+   - Greeting/chitchat ("hi", "thanks", "hello") → return UNCHANGED
+   - Off-topic/non-research/non-AI/ML ("who's the president", "what's the weather") → return UNCHANGED  
+   - Meta-reference ("what did I ask", "repeat that", "what were we discussing") → return SUMMARY of what they're referring to
+   - Research follow-up ("yes", "the first one", "tell me more") → extract topic from history
+   - Research question → create search query
 
-2. MAKES IT SEARCHABLE: Extract the key technical terms, topics, and concepts. Remove filler words.
+2. **OUTPUT RULES**:
+   - Greetings/off-topic: return unchanged
+   - Meta-references: "You asked about [X]" or "We were discussing [X]"
+   - AI Research: standalone search query with key technical terms
 
-3. STANDS ALONE: Someone reading just your query should understand exactly what to search for, without needing the conversation.
-
-The search targets topics in the field of Artificial Intelligence and Machine Learning.
-
-Examples of what you're handling:
-- User asks a detailed question → condense to key terms
-- User responds "yes please" to an offer → extract what was offered
-- User asks a follow-up → incorporate prior context
-- User says "tell me more about X" → X becomes the query focus
+Examples:
+| Input | Context | Output |
+|-------|---------|--------|
+| "hello" | - | "hello" |
+| "who is the president?" | - | "who is the president?" |
+| "What is GRPO?" | - | "GRPO reinforcement learning" |
+| "the first one!" | Offered: GRPO, DAPO, RL | "GRPO" |
+| "tell me more" | Discussing attention | "attention mechanism" |
+| "what did I just ask?" | Asked about president | "You asked about: who is the president of the USA" |
+| "what were we discussing?" | Discussing RLHF | "We were discussing: RLHF" |
+| "thanks!" | - | "thanks!" |
 """
 
 DOC_GRADER_SYSTEM_PROMPT = """You are a grader assessing the relevance of retrieved documents to a user question.

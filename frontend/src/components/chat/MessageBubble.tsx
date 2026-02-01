@@ -159,6 +159,33 @@ export function MessageBubble({ message, onCitationClick }: MessageBubbleProps) 
     h3: ({ children }: { children?: React.ReactNode }) => (
       <h3 className="text-sm font-bold mb-1 mt-2">{children}</h3>
     ),
+    // Tables
+    table: ({ children }: { children?: React.ReactNode }) => (
+      <div className="overflow-x-auto my-4">
+        <table className="min-w-full text-sm border-collapse border border-zinc-200 rounded">
+          {children}
+        </table>
+      </div>
+    ),
+    thead: ({ children }: { children?: React.ReactNode }) => (
+      <thead className="bg-zinc-100">{children}</thead>
+    ),
+    tbody: ({ children }: { children?: React.ReactNode }) => (
+      <tbody>{children}</tbody>
+    ),
+    tr: ({ children }: { children?: React.ReactNode }) => (
+      <tr className="border-b border-zinc-200">{children}</tr>
+    ),
+    th: ({ children }: { children?: React.ReactNode }) => (
+      <th className="px-3 py-2 text-left font-semibold text-zinc-700 border-r border-zinc-200 last:border-r-0">
+        {children}
+      </th>
+    ),
+    td: ({ children }: { children?: React.ReactNode }) => (
+      <td className="px-3 py-2 text-zinc-600 border-r border-zinc-200 last:border-r-0">
+        {children}
+      </td>
+    ),
   }), []);
 
   // Helper function to process children and replace citation references
