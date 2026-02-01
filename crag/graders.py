@@ -14,7 +14,7 @@ import json
 from typing import Literal, List, Optional, Any
 from pydantic import BaseModel, Field
 
-# Import model configurations from centralized config
+# Import model configurations and prompts from centralized config
 from .config import (
     ROUTER_MODEL,
     REWRITER_MODEL,
@@ -25,6 +25,10 @@ from .config import (
     MAX_DOC_LENGTH,
     MAX_RERANK_LENGTH,
     MAX_HISTORY_LENGTH,
+    ROUTER_SYSTEM_PROMPT,
+    REWRITER_SYSTEM_PROMPT,
+    DOC_GRADER_SYSTEM_PROMPT,
+    GEN_GRADER_SYSTEM_PROMPT,
 )
 
 # ============== Pydantic Models for Structured Output ==============
@@ -199,26 +203,6 @@ class QueryRouter:
     - Other research, current events → web_search
     """
     
-    SYSTEM_PROMPT = """You are an expert at routing user questions.
-
-You have THREE routes:
-
-1. **conversational**: For greetings, chitchat, questions about your capabilities, 
-   off-topic queries, or anything not related to research/AI/ML.
-   Examples: "Hi", "Hello", "What can you help me with?", "Tell me a joke", "How are you?"
-
-2. **vectorstore**: For questions about NeurIPS 2025 research, ML/AI methods, 
-   architectures, benchmarks, or technical concepts covered in the indexed papers.
-   Examples: "What are recent advances in transformers?", "Explain diffusion models", 
-   "Papers about reinforcement learning", "How does attention work?"
-
-3. **web_search**: For research questions outside NeurIPS 2025 scope, other 
-   conferences, current events, or topics requiring up-to-date information.
-   Examples: "What did OpenAI announce last week?", "ICLR 2024 best papers", 
-   "Latest news about GPT-5"
-
-Route based on the question's intent."""
-
     def __init__(self, model: str = ROUTER_MODEL):
         self.model = model
         self._client = None
@@ -242,7 +226,7 @@ Route based on the question's intent."""
         client = self._get_client()
         
         messages = [
-            {"role": "system", "content": self.SYSTEM_PROMPT},
+            {"role": "system", "content": ROUTER_SYSTEM_PROMPT},
             {"role": "user", "content": f"Question: {question}"}
         ]
         
@@ -257,15 +241,6 @@ class DocumentGrader:
     Uses a single LLM call to grade all documents at once instead of N calls.
     """
     
-    SYSTEM_PROMPT = """You are a grader assessing the relevance of retrieved documents to a user question.
-
-Your task:
-1. For each document, check if it contains keywords or semantic meaning relevant to the question
-2. Documents do NOT need to fully answer the question - just be relevant/useful
-3. Return a list of 'yes' or 'no' scores, one per document in order
-
-Be lenient - if there's any reasonable connection, mark it as relevant."""
-
     def __init__(self, model: str = DOC_GRADER_MODEL):
         self.model = model
         self._client = None
@@ -306,7 +281,7 @@ Be lenient - if there's any reasonable connection, mark it as relevant."""
         documents_text = "\n\n---\n\n".join(doc_parts)
         
         messages = [
-            {"role": "system", "content": self.SYSTEM_PROMPT},
+            {"role": "system", "content": DOC_GRADER_SYSTEM_PROMPT},
             {"role": "user", "content": f"""Documents:
 {documents_text}
 
@@ -351,22 +326,6 @@ class GenerationGrader:
         - "not useful": Generation is grounded but doesn't answer the question
     """
     
-    SYSTEM_PROMPT = """You are a grader assessing the quality of an LLM-generated answer.
-
-You must evaluate TWO criteria:
-
-1. **Grounding (is_grounded)**: Is the answer grounded in / supported by the provided documents?
-   - Check if the key claims in the answer are supported by the documents
-   - Minor elaborations are OK, but core facts must be grounded
-   - 'yes' if grounded, 'no' if it contains hallucinations or unsupported claims
-
-2. **Usefulness (answers_question)**: Does the answer address the user's question?
-   - Check if the answer directly addresses what was asked
-   - The answer doesn't need to be perfect, just relevant to the question
-   - 'yes' if useful, 'no' if it misses the point
-
-Be strict on grounding (hallucinations are bad), but reasonable on usefulness (partial answers count)."""
-
     def __init__(self, model: str = GEN_GRADER_MODEL):
         self.model = model
         self._client = None
@@ -396,7 +355,7 @@ Be strict on grounding (hallucinations are bad), but reasonable on usefulness (p
         client = self._get_client()
         
         messages = [
-            {"role": "system", "content": self.SYSTEM_PROMPT},
+            {"role": "system", "content": GEN_GRADER_SYSTEM_PROMPT},
             {"role": "user", "content": f"""Source Documents:
 {documents}
 
@@ -431,25 +390,6 @@ class QueryRewriter:
     2. Condense verbose queries into focused, searchable terms
     """
     
-    SYSTEM_PROMPT = """You are an expert at understanding user intent from conversations and creating search queries.
-
-Given a conversation history and the user's latest message, create a standalone search query that:
-
-1. CAPTURES THE FULL CONTEXT: Look at the entire conversation. If the user says "yes", "sure", "tell me more", etc., figure out what they're referring to from the assistant's last message.
-
-2. MAKES IT SEARCHABLE: Extract the key technical terms, topics, and concepts. Remove filler words.
-
-3. STANDS ALONE: Someone reading just your query should understand exactly what to search for, without needing the conversation.
-
-The search targets topics in the field of Artificial Intelligence and Machine Learning.
-
-Examples of what you're handling:
-- User asks a detailed question → condense to key terms
-- User responds "yes please" to an offer → extract what was offered
-- User asks a follow-up → incorporate prior context
-- User says "tell me more about X" → X becomes the query focus
-"""
-
     def __init__(self, model: str = REWRITER_MODEL):
         self.model = model
         self._client = None
@@ -494,7 +434,7 @@ Current User Question: {question}
 Rewrite the question as a standalone search query."""
 
         messages = [
-            {"role": "system", "content": self.SYSTEM_PROMPT},
+            {"role": "system", "content": REWRITER_SYSTEM_PROMPT},
             {"role": "user", "content": user_content}
         ]
         

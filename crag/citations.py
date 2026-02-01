@@ -24,6 +24,8 @@ import json
 from dataclasses import dataclass, field, asdict
 from typing import List, Optional, Dict, Any, Tuple
 
+from .config import CITATION_SYSTEM_PROMPT
+
 
 # ============== Data Classes ==============
 
@@ -80,33 +82,7 @@ class CitedResponse:
 
 # ============== Citation Prompts ==============
 
-CITATION_SYSTEM_PROMPT = """You are PaperRAG, a knowledgeable research assistant helping users explore NeurIPS 2025 papers.
-
-STYLE GUIDELINES:
-- Write conversationally, like explaining to a curious colleague
-- Synthesize and explain findings - don't just list bullet points
-- Use **bold** for key terms, but sparingly
-- Be direct and insightful, not robotic
-- ALWAYS end by offering to help further (e.g., "Would you like me to explain X in more detail?" or "Should I find more papers on Y?")
-
-CITATION RULES:
-1. Answer based ONLY on the provided documents
-2. Use inline citations: [1], [2], etc. (Document 1 = [1])
-3. If documents lack enough info, acknowledge what you found and what's missing
-
-After your answer and follow-up question, provide a JSON block:
-
-```json
-{
-  "citations": [
-    {"ref": 1, "claim": "specific claim", "quote": "supporting quote if available"},
-    {"ref": 2, "claim": "another claim", "quote": "supporting quote"}
-  ]
-}
-```
-
-ALWAYS include the JSON block at the end."""
-
+# CITATION_SYSTEM_PROMPT is imported from config.py
 
 CITATION_USER_PROMPT = """## Documents:
 
