@@ -14,24 +14,27 @@ import json
 from typing import Literal, List, Optional, Any
 from pydantic import BaseModel, Field
 
-# Model assignments per grader (optimized for cost/quality tradeoff)
-ROUTER_MODEL = "ministral-3b-latest"        # Fast, cheap routing
-REWRITER_MODEL = "mistral-small-latest"     # Query rewriting with history
-DOC_GRADER_MODEL = "mistral-large-latest"   # Best context understanding
-GEN_GRADER_MODEL = "mistral-small-latest"   # Good balance for grading
-DEFAULT_MODEL = "mistral-large-latest"       # Fallback / generation
-
-MAX_DOC_LENGTH = 2000      # For grading
-MAX_RERANK_LENGTH = 4000   # For Cohere
-MAX_HISTORY_LENGTH = 500   # For query rewriting
+# Import model configurations from centralized config
+from .config import (
+    ROUTER_MODEL,
+    REWRITER_MODEL,
+    DOC_GRADER_MODEL,
+    GEN_GRADER_MODEL,
+    GENERATION_MODEL,
+    DEFAULT_MODEL,
+    MAX_DOC_LENGTH,
+    MAX_RERANK_LENGTH,
+    MAX_HISTORY_LENGTH,
+)
 
 # ============== Pydantic Models for Structured Output ==============
 
 class RouteQuery(BaseModel):
     """Router decision for query classification."""
-    datasource: Literal["vectorstore", "web_search"] = Field(
-        description="Route to 'vectorstore' for technical papers/indexed content, "
-                    "'web_search' for general knowledge or current events."
+    datasource: Literal["conversational", "vectorstore", "web_search"] = Field(
+        description="Route to 'conversational' for greetings/chitchat/off-topic, "
+                    "'vectorstore' for NeurIPS 2025 research questions, "
+                    "'web_search' for other research or current events."
     )
     reasoning: str = Field(
         description="Brief explanation for the routing decision."
@@ -191,24 +194,30 @@ class QueryRouter:
     
     Uses ministral-3b for fast, cheap routing decisions.
     
-    - Technical papers, indexed content → vectorstore
-    - General knowledge, current events → web_search
+    - Greetings, chitchat, off-topic → conversational
+    - NeurIPS 2025 research, ML/AI topics → vectorstore
+    - Other research, current events → web_search
     """
     
-    SYSTEM_PROMPT = """You are an expert at routing user questions to the appropriate data source.
+    SYSTEM_PROMPT = """You are an expert at routing user questions.
 
-You have access to two data sources:
+You have THREE routes:
 
-1. **vectorstore**: Contains ONLY NeurIPS 2025 accepted papers (6,000+ papers). 
-   Topics: machine learning, deep learning, optimization, reinforcement learning, NLP, computer vision, AI theory.
-   Use this for: questions about NeurIPS 2025 research, methods, architectures, benchmarks, or technical ML concepts.
-   
-2. **web_search**: For everything else — other conferences (ICML, ICLR, ACL), other years, 
-   current events, company news, general knowledge, or topics outside academic ML.
+1. **conversational**: For greetings, chitchat, questions about your capabilities, 
+   off-topic queries, or anything not related to research/AI/ML.
+   Examples: "Hi", "Hello", "What can you help me with?", "Tell me a joke", "How are you?"
 
-Important: The vectorstore contains ONLY NeurIPS 2025. Questions about other venues, years, or non-research topics should use web_search.
+2. **vectorstore**: For questions about NeurIPS 2025 research, ML/AI methods, 
+   architectures, benchmarks, or technical concepts covered in the indexed papers.
+   Examples: "What are recent advances in transformers?", "Explain diffusion models", 
+   "Papers about reinforcement learning", "How does attention work?"
 
-Based on the question, decide which source is most appropriate."""
+3. **web_search**: For research questions outside NeurIPS 2025 scope, other 
+   conferences, current events, or topics requiring up-to-date information.
+   Examples: "What did OpenAI announce last week?", "ICLR 2024 best papers", 
+   "Latest news about GPT-5"
+
+Route based on the question's intent."""
 
     def __init__(self, model: str = ROUTER_MODEL):
         self.model = model
@@ -413,31 +422,48 @@ Evaluate the answer for grounding and usefulness."""}
 
 class QueryRewriter:
     """
-    Rewrites user queries into standalone search queries using conversation history.
+    Rewrites and optimizes user queries for better retrieval.
     
     Uses mistral-small for good balance of speed and quality.
     
-    Transforms contextual queries like "What about Claude's score?" into
-    standalone queries like "What is Claude 2's MMLU benchmark score?"
+    Two main purposes:
+    1. Make follow-up questions self-contained using conversation history
+    2. Condense verbose queries into focused, searchable terms
     """
     
-    SYSTEM_PROMPT = """You are an expert at reformulating user questions into standalone search queries.
+    SYSTEM_PROMPT = """You are an expert at transforming user questions into optimized search queries.
 
 Context: The search targets NeurIPS 2025 academic papers on machine learning and AI.
 
 Your task:
-1. Given a conversation history and the user's latest question, rewrite it as a standalone query
-2. The rewritten query should be self-contained - it should make sense without the conversation history
-3. Preserve the user's original intent and any specific details mentioned
-4. Expand abbreviations when helpful for search (e.g., "RL" → "reinforcement learning", "LLM" → "large language model")
-5. If the question is already standalone, return it with minimal changes
-6. Keep the query concise and search-friendly — remove filler words
+1. CONDENSE: Remove filler words, pleasantries, and verbose phrasing. Extract the core search intent.
+2. SELF-CONTAINED: If there's conversation history, incorporate context so the query stands alone.
+3. EXPAND ABBREVIATIONS: "RL" → "reinforcement learning", "LLM" → "large language model", "SLM" → "small language model"
+4. EXTRACT KEY CONCEPTS: Identify the main technical terms and research topics.
+5. PRESERVE INTENT: Don't change what the user is asking for.
 
 Examples:
-- History: "Tell me about GPT-4" / User: "What about its MMLU score?" → "GPT-4 MMLU benchmark performance"
-- History: "Papers on RLHF" / User: "Any from DeepMind?" → "DeepMind reinforcement learning from human feedback RLHF"
-- User: "What is RAG?" → "retrieval augmented generation RAG"
-- User: "How do LLMs handle long context?" → "large language models long context handling techniques" """
+
+Verbose → Condensed:
+- "My research focuses on model routing between LLMs and small models. What papers should I look at? What are the limitations?" 
+  → "LLM to small language model routing papers and limitations"
+
+- "I'm really interested in understanding how transformers work, especially the attention mechanism part. Can you explain?"
+  → "transformer attention mechanism explanation"
+
+- "Hey, so I was wondering if there are any papers about making language models more efficient?"
+  → "language model efficiency optimization papers"
+
+With History:
+- History: "Tell me about GPT-4" / User: "What about its MMLU score?" 
+  → "GPT-4 MMLU benchmark performance"
+
+- History: "Papers on RLHF" / User: "Any from DeepMind?" 
+  → "DeepMind reinforcement learning human feedback RLHF papers"
+
+Already Good:
+- "What is retrieval augmented generation?" → "retrieval augmented generation RAG"
+- "Diffusion models for image synthesis" → "diffusion models image synthesis" """
 
     def __init__(self, model: str = REWRITER_MODEL):
         self.model = model

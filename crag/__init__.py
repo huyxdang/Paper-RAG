@@ -49,11 +49,20 @@ from .graders import (
     GradeGeneration,
     GradeDocumentsBatch,
     RewrittenQuery,
-    DEFAULT_MODEL,
+)
+from .config import (
     ROUTER_MODEL,
+    CONVERSATIONAL_MODEL,
     REWRITER_MODEL,
     DOC_GRADER_MODEL,
     GEN_GRADER_MODEL,
+    GENERATION_MODEL,
+    EMBEDDING_MODEL,
+    DEFAULT_MODEL,
+    RETRIEVAL_TOP_K,
+    RERANK_TOP_K,
+    MAX_GENERATION_TOKENS,
+    CONVERSATIONAL_SYSTEM_PROMPT,
 )
 from .graph_state import Message
 from .graph import (
@@ -61,6 +70,32 @@ from .graph import (
     compile_crag_graph,
     run_crag,
     stream_crag,
+)
+from .session import (
+    Session,
+    SessionManager,
+    SessionStore,
+    InMemorySessionStore,
+    RedisSessionStore,
+    create_session_manager,
+)
+from .streaming import (
+    StreamEvent,
+    PipelineStreamer,
+    stream_crag_with_events,
+    status_event,
+    token_event,
+    error_event,
+    done_event,
+    citation_event,
+)
+from .citations import (
+    Citation,
+    CitedResponse,
+    CitationExtractor,
+    SourceInfo,
+    extract_citations,
+    format_citations_for_display,
 )
 
 __all__ = [
@@ -91,4 +126,27 @@ __all__ = [
     "compile_crag_graph",
     "run_crag",
     "stream_crag",
+    # Session Management
+    "Session",
+    "SessionManager",
+    "SessionStore",
+    "InMemorySessionStore",
+    "RedisSessionStore",
+    "create_session_manager",
+    # Streaming
+    "StreamEvent",
+    "PipelineStreamer",
+    "stream_crag_with_events",
+    "status_event",
+    "token_event",
+    "error_event",
+    "done_event",
+    "citation_event",
+    # Citations
+    "Citation",
+    "CitedResponse",
+    "CitationExtractor",
+    "SourceInfo",
+    "extract_citations",
+    "format_citations_for_display",
 ]

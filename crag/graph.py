@@ -20,11 +20,12 @@ from .graders import (
     QueryRewriter,
     DocumentGrader, 
     DocumentReranker,
-    GenerationGrader, 
-    DEFAULT_MODEL, 
-    ROUTER_MODEL, 
-    DOC_GRADER_MODEL, 
-    GEN_GRADER_MODEL,
+    GenerationGrader,
+)
+from .config import (
+    CONVERSATIONAL_MODEL,
+    GENERATION_MODEL,
+    CONVERSATIONAL_SYSTEM_PROMPT,
 )
 
 # Type alias for any retriever type
@@ -54,25 +55,25 @@ def create_crag_graph(
                 ↓
            route_question
                 ↓
-        ┌───────┴───────┐
-        ↓               ↓
-    vectorstore    web_search
-        ↓               │
-    retrieve (50)       │
-        ↓               │
-    rerank (→10)        │
-        ↓               │
-    grade_documents     │
-        ↓               │
-        ├───────────────┤
-        ↓               ↓
-    (if irrelevant)  generate ←─┐
-        ↓               ↓       │
-    web_search     grade_gen    │
-        ↓               ↓       │
-        └──→ generate   ├───────┘ (if not useful & !web_search_done)
-                        ↓
-                       END (if useful or end_degraded)
+        ┌───────┼───────────────┐
+        ↓       ↓               ↓
+    convers. vectorstore    web_search
+        ↓       ↓               │
+       END  retrieve (50)       │
+                ↓               │
+            rerank (→10)        │
+                ↓               │
+            grade_documents     │
+                ↓               │
+                ├───────────────┤
+                ↓               ↓
+            (if irrelevant)  generate ←─┐
+                ↓               ↓       │
+            web_search     grade_gen    │
+                ↓               ↓       │
+                └──→ generate   ├───────┘ (if not useful & !web_search_done)
+                                ↓
+                               END (if useful or end_degraded)
     ```
     
     Args:
@@ -112,24 +113,27 @@ def create_crag_graph(
     # ============== Node Definitions (Closures) ==============
     
     def rewrite_query(state: GraphState) -> GraphState:
-        """Rewrite the user's question into a standalone search query using history context."""
+        """Rewrite and optimize the user's question for better retrieval.
+        
+        Always runs to:
+        1. Condense verbose queries into focused search terms
+        2. Make follow-up questions self-contained using history
+        """
         print("---REWRITING QUERY---")
         question = state["question"]
         history = state.get("history", [])
         
-        # If no history, the query is already standalone
-        if not history:
-            print(f"  No history, using original query")
-            return {
-                **state,
-                "rewritten_query": question
-            }
-        
+        # Always run rewriter for query optimization (condensation + self-containment)
         result = query_rewriter.rewrite(question, history)
+        
+        query_changed = result.query.lower().strip() != question.lower().strip()
         
         print(f"  Original: {question}")
         print(f"  Rewritten: {result.query}")
-        print(f"  Reasoning: {result.reasoning}")
+        if query_changed:
+            print(f"  Reasoning: {result.reasoning}")
+        else:
+            print(f"  (No significant changes)")
         
         return {
             **state,
@@ -355,6 +359,42 @@ Instructions:
             "generation_grade": result
         }
     
+    # ============== Conversational Generation ==============
+    
+    def generate_conversational(state: GraphState) -> GraphState:
+        """
+        Generate a friendly response for non-research queries.
+        
+        Uses ministral-3b for fast, simple conversational responses.
+        Skips retrieval, grading, and citation extraction.
+        """
+        print("---GENERATING CONVERSATIONAL RESPONSE---")
+        question = state.get("rewritten_query") or state["question"]
+        
+        # Use ministral-3b for fast conversational responses
+        api_key = os.getenv("MISTRAL_API_KEY")
+        client = Mistral(api_key=api_key)
+        
+        response = client.chat.complete(
+            model=CONVERSATIONAL_MODEL,
+            messages=[
+                {"role": "system", "content": CONVERSATIONAL_SYSTEM_PROMPT},
+                {"role": "user", "content": question}
+            ],
+            temperature=0.7,
+            max_tokens=500,
+        )
+        
+        generation = response.choices[0].message.content
+        print(f"  Generated: {generation[:100]}...")
+        
+        return {
+            **state,
+            "generation": generation,
+            "documents": [],  # No documents for conversational
+            "generation_grade": "useful",  # Skip grading
+        }
+    
     # ============== Pure Routing Functions (no LLM calls) ==============
     
     def route_after_question_routing(state: GraphState) -> str:
@@ -407,6 +447,7 @@ Instructions:
     # Add nodes
     workflow.add_node("rewrite_query", rewrite_query)
     workflow.add_node("route_question", route_question)
+    workflow.add_node("generate_conversational", generate_conversational)  # NEW
     workflow.add_node("retrieve", retrieve)
     workflow.add_node("rerank_documents", rerank_documents)
     workflow.add_node("grade_documents", grade_documents)
@@ -420,15 +461,19 @@ Instructions:
     # Edge: rewrite_query → route_question
     workflow.add_edge("rewrite_query", "route_question")
     
-    # Conditional Edge: route_question → vectorstore OR web_search
+    # Conditional Edge: route_question → conversational, vectorstore, OR web_search
     workflow.add_conditional_edges(
         "route_question",
         route_after_question_routing,
         {
+            "conversational": "generate_conversational",  # NEW
             "vectorstore": "retrieve",
             "web_search": "web_search",
         }
     )
+    
+    # Edge: generate_conversational → END (skip grading for conversational)
+    workflow.add_edge("generate_conversational", END)
     
     # Edge: retrieve → rerank_documents → grade_documents
     workflow.add_edge("retrieve", "rerank_documents")
