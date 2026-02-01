@@ -315,6 +315,9 @@ async def chat_stream(
     session_manager = get_session_manager()
     session = session_manager.get_or_create(session_id)
     
+    # Debug logging for session tracking
+    print(f"[Session] Requested: {session_id}, Using: {session.id}, Turns: {session.turn_count()}, History length: {len(session.get_history())}")
+    
     async def event_generator() -> AsyncGenerator[dict, None]:
         """Generate SSE events from the pipeline."""
         answer = ""
@@ -354,6 +357,7 @@ async def chat_stream(
             if answer:
                 session.add_turn(question, answer)
                 session_manager.save_session(session)
+                print(f"[Session] Saved: {session.id}, Turns: {session.turn_count()}")
                 
         except Exception as e:
             print(f"Stream error: {e}")

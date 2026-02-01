@@ -292,10 +292,36 @@ class PipelineStreamer:
         }
         
         try:
-            # Step 1: Rewrite/optimize query (always runs for condensation + self-containment)
+            # Step 1: Route question FIRST (using original query to detect intent)
+            timer.start()
+            route_result = self.router.route(question)
+            state["route_decision"] = route_result.datasource
+            yield status_event(
+                step="routing",
+                latency_ms=timer.elapsed_ms(),
+                details={"decision": route_result.datasource, "reasoning": route_result.reasoning[:200]}
+            )
+            
+            # Step 2: Handle conversational route (no rewriting needed)
+            if route_result.datasource == "conversational":
+                # Conversational response - skip rewriting and retrieval entirely
+                state["rewritten_query"] = question  # Keep original
+                yield from self._generate_conversational(question, state, timer)
+                # Done event for conversational
+                yield done_event(
+                    session_id=session_id,
+                    total_ms=timer.total_ms(),
+                    grade="conversational",
+                    generation=state.get("generation"),
+                    citations=[]
+                )
+                return  # Exit early, no need for grading
+            
+            # Step 3: Rewrite/optimize query (only for vectorstore/web_search)
             timer.start()
             result = self.query_rewriter.rewrite(question, history)
             state["rewritten_query"] = result.query
+            query_for_search = result.query
             
             # Only show rewrite details if the query actually changed
             query_changed = result.query.lower().strip() != question.lower().strip()
@@ -310,37 +336,14 @@ class PipelineStreamer:
                 }
             )
             
-            # Step 2: Route question
-            timer.start()
-            query_for_routing = state["rewritten_query"]
-            route_result = self.router.route(query_for_routing)
-            state["route_decision"] = route_result.datasource
-            yield status_event(
-                step="routing",
-                latency_ms=timer.elapsed_ms(),
-                details={"decision": route_result.datasource, "reasoning": route_result.reasoning[:200]}
-            )
-            
-            # Step 3: Route to appropriate handler
-            if route_result.datasource == "conversational":
-                # Conversational response - skip retrieval entirely
-                yield from self._generate_conversational(question, state, timer)
-                # Done event for conversational
-                yield done_event(
-                    session_id=session_id,
-                    total_ms=timer.total_ms(),
-                    grade="conversational",
-                    generation=state.get("generation"),
-                    citations=[]
-                )
-                return  # Exit early, no need for grading
-            elif route_result.datasource == "web_search":
+            # Step 4: Route to appropriate handler
+            if route_result.datasource == "web_search":
                 # Direct to web search
                 yield from self._do_web_search(state, timer)
             else:
                 # Vectorstore path
                 timer.start()
-                documents = self.retriever.retrieve(query_for_routing, top_k=self.retrieval_top_k)
+                documents = self.retriever.retrieve(query_for_search, top_k=self.retrieval_top_k)
                 state["documents"] = documents
                 yield status_event(
                     step="retrieving",
@@ -351,7 +354,7 @@ class PipelineStreamer:
                 # Step 4: Rerank
                 if documents:
                     timer.start()
-                    reranked = self.doc_reranker.rerank(documents, query_for_routing, top_k=self.rerank_top_k)
+                    reranked = self.doc_reranker.rerank(documents, query_for_search, top_k=self.rerank_top_k)
                     state["documents"] = reranked
                     yield status_event(
                         step="reranking",
