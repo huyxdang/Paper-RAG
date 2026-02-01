@@ -40,6 +40,7 @@ from .config import (
     GENERATION_MODEL,
     CONVERSATIONAL_MODEL,
     CONVERSATIONAL_SYSTEM_PROMPT,
+    MAX_GENERATION_TOKENS,
 )
 from .citations import CitationExtractor, CitedResponse, Citation
 
@@ -317,7 +318,7 @@ class PipelineStreamer:
             yield status_event(
                 step="routing",
                 latency_ms=timer.elapsed_ms(),
-                details={"decision": route_result.datasource, "reasoning": route_result.reasoning[:100]}
+                details={"decision": route_result.datasource, "reasoning": route_result.reasoning[:200]}
             )
             
             # Step 3: Route to appropriate handler
@@ -327,7 +328,7 @@ class PipelineStreamer:
                 # Done event for conversational
                 yield done_event(
                     session_id=session_id,
-                    total_ms=int((time.time() - pipeline_start) * 1000),
+                    total_ms=timer.total_ms(),
                     grade="conversational",
                     generation=state.get("generation"),
                     citations=[]
@@ -574,14 +575,14 @@ class PipelineStreamer:
         
         # Use citation-aware prompt if enabled
         if self.use_citations:
-            system_prompt = """You are PaperRAG, a knowledgeable research assistant helping users explore NeurIPS 2025 papers.
+            system_prompt = """You are PaperRAG, a knowledgeable assistant helping users explore and answer questions about Artificial Intelligence.
 
 STYLE GUIDELINES:
 - Write conversationally, like explaining to a curious colleague
 - Synthesize and explain findings - don't just list bullet points
 - Use **bold** for key terms, but sparingly
 - Be direct and insightful, not robotic
-- ALWAYS end with a thought-provoking follow-up question related to the topic
+- ALWAYS end by offering to help further (e.g., "Would you like me to explain X in more detail?" or "Should I find more papers on Y?")
 
 CITATION RULES:
 1. Answer based ONLY on the provided documents
@@ -604,20 +605,20 @@ ALWAYS include the JSON block at the end."""
             system_prompt = """You are PaperRAG, a knowledgeable research assistant for NeurIPS 2025 papers.
 
 STYLE: Write conversationally, synthesize findings (don't just list), use **bold** sparingly.
-Always end with a follow-up question.
+Always end by offering to help further (e.g., "Want me to explain this in more detail?").
 
 RULES:
 - Answer based ONLY on the provided documents
 - Cite document numbers when relevant: [Document 1], [Document 2], etc.
 - If documents lack info, acknowledge limitations"""
 
-        user_prompt = f"""## Context Documents:
+        context_prompt = f"""## Retrieved Documents:
 {context}
 
-## Question:
+## User Question:
 {question}
 
-## Answer:"""
+## Your Answer:"""
 
         # Yield status that generation is starting
         yield status_event(
@@ -636,10 +637,10 @@ RULES:
                 model=self.generation_model,
                 messages=[
                     {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_prompt}
+                    {"role": "user", "content": context_prompt}
                 ],
-                temperature=0,
-                max_tokens=2000,
+                temperature=0.8,
+                max_tokens=MAX_GENERATION_TOKENS,
             )
             
             for chunk in stream:

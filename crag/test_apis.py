@@ -420,6 +420,407 @@ def test_full_pipeline_with_history() -> TestResult:
         return TestResult(name, False, "Pipeline with history failed", str(e))
 
 
+# ============== Session Management Tests ==============
+
+def test_session_inmemory() -> TestResult:
+    """Test in-memory session management."""
+    name = "Session (InMemory)"
+    
+    try:
+        from crag.session import Session, SessionManager, InMemorySessionStore
+        
+        # Create manager with in-memory store explicitly
+        store = InMemorySessionStore()
+        manager = SessionManager(store=store)
+        
+        # Test session creation
+        session = manager.create_session(metadata={"user": "test"})
+        assert session.id, "Session should have an ID"
+        assert session.metadata.get("user") == "test", "Metadata should be stored"
+        assert session.turn_count() == 0, "New session should have 0 turns"
+        
+        # Test adding turns
+        session.add_turn("What is GPT-4?", "GPT-4 is a large language model by OpenAI.")
+        assert session.turn_count() == 1, "Should have 1 turn after add_turn"
+        assert len(session.get_history()) == 2, "History should have 2 messages"
+        
+        # Test save and retrieve
+        manager.save_session(session)
+        retrieved = manager.get_session(session.id)
+        assert retrieved is not None, "Should retrieve saved session"
+        assert retrieved.turn_count() == 1, "Retrieved session should have 1 turn"
+        
+        # Test get_or_create with existing
+        same_session = manager.get_or_create(session.id)
+        assert same_session.id == session.id, "get_or_create should return existing session"
+        
+        # Test get_or_create without ID
+        new_session = manager.get_or_create(None)
+        assert new_session.id != session.id, "get_or_create with None should create new session"
+        
+        # Test delete
+        deleted = manager.delete_session(session.id)
+        assert deleted, "delete_session should return True"
+        assert manager.get_session(session.id) is None, "Deleted session should not be found"
+        
+        return TestResult(
+            name,
+            True,
+            f"All session operations work correctly. Storage: {manager.get_storage_type()}"
+        )
+    except Exception as e:
+        return TestResult(name, False, "Session test failed", str(e))
+
+
+def test_session_history_limit() -> TestResult:
+    """Test that session history is properly limited."""
+    name = "Session History Limit"
+    
+    try:
+        from crag.session import Session, SessionManager, InMemorySessionStore
+        
+        # Create manager with small max_turns for testing
+        store = InMemorySessionStore()
+        manager = SessionManager(store=store, max_turns=3)
+        session = manager.create_session()
+        
+        # Add more turns than max_turns
+        for i in range(5):
+            session.add_turn(f"Question {i+1}", f"Answer {i+1}")
+        
+        # Should only keep last 3 turns (6 messages)
+        history = session.get_history()
+        assert len(history) == 6, f"History should have 6 messages (3 turns), got {len(history)}"
+        assert session.turn_count() == 3, f"Turn count should be 3, got {session.turn_count()}"
+        
+        # Verify it's the LAST 3 turns
+        assert history[0]["content"] == "Question 3", f"First message should be Question 3, got {history[0]['content']}"
+        assert history[-1]["content"] == "Answer 5", f"Last message should be Answer 5, got {history[-1]['content']}"
+        
+        return TestResult(
+            name,
+            True,
+            f"History correctly limited to 3 turns (oldest trimmed)"
+        )
+    except Exception as e:
+        return TestResult(name, False, "History limit test failed", str(e))
+
+
+def test_session_expiry() -> TestResult:
+    """Test session expiration."""
+    name = "Session Expiry"
+    
+    try:
+        from crag.session import Session, SessionManager, InMemorySessionStore
+        from datetime import datetime, timedelta
+        
+        store = InMemorySessionStore()
+        manager = SessionManager(store=store, timeout_minutes=1)  # 1 minute timeout
+        session = manager.create_session()
+        session_id = session.id
+        
+        # Session should be valid immediately
+        assert manager.get_session(session_id) is not None, "Fresh session should be valid"
+        
+        # Manually expire the session by setting last_activity in the past
+        session.last_activity = datetime.now() - timedelta(minutes=5)
+        manager.save_session(session)
+        
+        # Session should now be expired
+        expired_session = manager.get_session(session_id)
+        assert expired_session is None, "Expired session should return None"
+        
+        # Test is_expired method directly
+        fresh_session = manager.create_session()
+        assert not fresh_session.is_expired(1), "Fresh session should not be expired"
+        
+        fresh_session.last_activity = datetime.now() - timedelta(minutes=5)
+        assert fresh_session.is_expired(1), "Old session should be expired"
+        
+        return TestResult(
+            name,
+            True,
+            "Session expiry works correctly"
+        )
+    except Exception as e:
+        return TestResult(name, False, "Expiry test failed", str(e))
+
+
+def test_session_serialization() -> TestResult:
+    """Test session serialization/deserialization."""
+    name = "Session Serialization"
+    
+    try:
+        from crag.session import Session
+        
+        # Create a session with data
+        session = Session(
+            id="test-123",
+            max_turns=10,
+            metadata={"user_id": "user-456", "preference": "dark_mode"}
+        )
+        session.add_turn("Hello", "Hi there!")
+        session.add_turn("How are you?", "I'm doing well, thanks!")
+        
+        # Serialize to dict
+        data = session.to_dict()
+        assert data["id"] == "test-123", "ID should be preserved"
+        assert len(data["history"]) == 4, "History should have 4 messages"
+        assert data["metadata"]["user_id"] == "user-456", "Metadata should be preserved"
+        
+        # Deserialize from dict
+        restored = Session.from_dict(data)
+        assert restored.id == session.id, "Restored ID should match"
+        assert restored.turn_count() == session.turn_count(), "Restored turn count should match"
+        assert restored.metadata == session.metadata, "Restored metadata should match"
+        
+        return TestResult(
+            name,
+            True,
+            "Session serialization/deserialization works correctly"
+        )
+    except Exception as e:
+        return TestResult(name, False, "Serialization test failed", str(e))
+
+
+def test_session_redis() -> TestResult:
+    """Test Redis session storage (if REDIS_URL is set)."""
+    name = "Session (Redis)"
+    
+    redis_url = os.getenv("REDIS_URL")
+    if not redis_url:
+        return TestResult(name, False, "REDIS_URL not set (skipped)")
+    
+    try:
+        from crag.session import SessionManager, RedisSessionStore
+        
+        # Create manager with Redis store
+        store = RedisSessionStore(redis_url=redis_url)
+        manager = SessionManager(store=store)
+        
+        # Test basic operations
+        session = manager.create_session(metadata={"test": "redis"})
+        session.add_turn("Test question", "Test answer")
+        manager.save_session(session)
+        
+        # Retrieve and verify
+        retrieved = manager.get_session(session.id)
+        assert retrieved is not None, "Should retrieve session from Redis"
+        assert retrieved.turn_count() == 1, "Should have 1 turn"
+        assert retrieved.metadata.get("test") == "redis", "Metadata should be preserved"
+        
+        # Cleanup
+        manager.delete_session(session.id)
+        
+        return TestResult(
+            name,
+            True,
+            f"Redis session storage works correctly"
+        )
+    except ImportError:
+        return TestResult(name, False, "redis package not installed (skipped)")
+    except Exception as e:
+        return TestResult(name, False, "Redis session test failed", str(e))
+
+
+# ============== Streaming Tests ==============
+
+def test_stream_event_format() -> TestResult:
+    """Test StreamEvent creation and SSE formatting."""
+    name = "StreamEvent Format"
+    
+    try:
+        from crag.streaming import (
+            StreamEvent, status_event, token_event, error_event, done_event
+        )
+        import json
+        
+        # Test status event
+        evt = status_event("routing", 45, {"decision": "vectorstore"})
+        assert evt.event == "status", "Event type should be 'status'"
+        assert evt.data["latency_ms"] == 45, "Latency should be 45"
+        assert evt.data["details"]["decision"] == "vectorstore", "Details should be preserved"
+        
+        # Test SSE format
+        sse = evt.to_sse()
+        assert sse.startswith("data: "), "SSE should start with 'data: '"
+        assert sse.endswith("\n\n"), "SSE should end with double newline"
+        
+        # Parse SSE JSON
+        json_part = sse[6:-2]  # Remove 'data: ' and '\n\n'
+        parsed = json.loads(json_part)
+        assert parsed["event"] == "status", "Parsed event type should match"
+        assert parsed["data"]["latency_ms"] == 45, "Parsed data should match"
+        
+        # Test token event
+        evt = token_event("GPT-4")
+        assert evt.event == "token", "Event type should be 'token'"
+        assert evt.data["content"] == "GPT-4", "Content should be 'GPT-4'"
+        
+        # Test error event
+        evt = error_event("Connection failed", step="retrieving")
+        assert evt.event == "error", "Event type should be 'error'"
+        assert evt.data["message"] == "Connection failed", "Message should match"
+        assert evt.data["step"] == "retrieving", "Step should match"
+        
+        # Test done event
+        evt = done_event("sess-123", 1500, grade="useful", generation="The answer")
+        assert evt.event == "done", "Event type should be 'done'"
+        assert evt.data["session_id"] == "sess-123", "Session ID should match"
+        assert evt.data["total_ms"] == 1500, "Total ms should match"
+        assert evt.data["grade"] == "useful", "Grade should match"
+        
+        return TestResult(
+            name,
+            True,
+            "All event formats correct, SSE parsing works"
+        )
+    except Exception as e:
+        return TestResult(name, False, "Event format test failed", str(e))
+
+
+def test_stream_timer() -> TestResult:
+    """Test Timer latency tracking."""
+    name = "Streaming Timer"
+    
+    try:
+        from crag.streaming import Timer
+        import time
+        
+        timer = Timer()
+        
+        # Test elapsed timing
+        timer.start()
+        time.sleep(0.03)  # 30ms
+        elapsed = timer.elapsed_ms()
+        assert 20 <= elapsed <= 80, f"Expected ~30ms, got {elapsed}ms"
+        
+        # Test reset
+        timer.start()
+        time.sleep(0.02)  # 20ms
+        elapsed2 = timer.elapsed_ms()
+        assert 10 <= elapsed2 <= 60, f"Expected ~20ms after reset, got {elapsed2}ms"
+        
+        # Test total (should accumulate)
+        total = timer.total_ms()
+        assert total >= 40, f"Total should be >= 40ms, got {total}ms"
+        
+        return TestResult(
+            name,
+            True,
+            f"Timer works: elapsed={elapsed2}ms, total={total}ms"
+        )
+    except Exception as e:
+        return TestResult(name, False, "Timer test failed", str(e))
+
+
+def test_pipeline_streamer_init() -> TestResult:
+    """Test PipelineStreamer initialization."""
+    name = "PipelineStreamer Init"
+    
+    if not check_api_key("MISTRAL_API_KEY"):
+        return TestResult(name, False, "MISTRAL_API_KEY not set")
+    
+    try:
+        from crag.streaming import PipelineStreamer
+        from crag.retrieval import InMemoryHybridRetriever
+        
+        retriever = InMemoryHybridRetriever()
+        
+        # Test initialization with defaults
+        streamer = PipelineStreamer(
+            retriever=retriever,
+            retrieval_top_k=10,
+            rerank_top_k=5,
+        )
+        
+        assert streamer.retriever is retriever, "Retriever should be set"
+        assert streamer.retrieval_top_k == 10, "retrieval_top_k should be 10"
+        assert streamer.rerank_top_k == 5, "rerank_top_k should be 5"
+        assert streamer.router is not None, "Router should be auto-created"
+        assert streamer.doc_grader is not None, "DocGrader should be auto-created"
+        
+        return TestResult(
+            name,
+            True,
+            "PipelineStreamer initializes correctly with defaults"
+        )
+    except Exception as e:
+        return TestResult(name, False, "PipelineStreamer init failed", str(e))
+
+
+def test_api_health_endpoint() -> TestResult:
+    """Test the FastAPI health endpoint."""
+    name = "API Health Endpoint"
+    
+    try:
+        from fastapi.testclient import TestClient
+        from crag.api import app
+        
+        client = TestClient(app)
+        response = client.get("/health")
+        
+        assert response.status_code == 200, f"Expected 200, got {response.status_code}"
+        
+        data = response.json()
+        assert data["status"] == "healthy", "Status should be 'healthy'"
+        assert "retriever" in data, "Should include retriever type"
+        assert "session_storage" in data, "Should include session storage type"
+        
+        return TestResult(
+            name,
+            True,
+            f"Health endpoint works: {data['retriever']}, {data['session_storage']}"
+        )
+    except ImportError as e:
+        return TestResult(name, False, f"FastAPI not installed: {e}")
+    except Exception as e:
+        return TestResult(name, False, "Health endpoint test failed", str(e))
+
+
+def test_api_session_endpoints() -> TestResult:
+    """Test the FastAPI session endpoints."""
+    name = "API Session Endpoints"
+    
+    try:
+        from fastapi.testclient import TestClient
+        from crag.api import app
+        
+        client = TestClient(app)
+        
+        # Create session
+        response = client.post("/sessions")
+        assert response.status_code == 200, f"Create: expected 200, got {response.status_code}"
+        data = response.json()
+        session_id = data["session_id"]
+        assert session_id, "Should return session_id"
+        
+        # Get session
+        response = client.get(f"/sessions/{session_id}")
+        assert response.status_code == 200, f"Get: expected 200, got {response.status_code}"
+        data = response.json()
+        assert data["id"] == session_id, "Session ID should match"
+        assert data["turns"] == 0, "New session should have 0 turns"
+        
+        # Delete session
+        response = client.delete(f"/sessions/{session_id}")
+        assert response.status_code == 200, f"Delete: expected 200, got {response.status_code}"
+        
+        # Verify deleted
+        response = client.get(f"/sessions/{session_id}")
+        assert response.status_code == 404, f"After delete: expected 404, got {response.status_code}"
+        
+        return TestResult(
+            name,
+            True,
+            "Session endpoints work: create, get, delete"
+        )
+    except ImportError as e:
+        return TestResult(name, False, f"FastAPI not installed: {e}")
+    except Exception as e:
+        return TestResult(name, False, "Session endpoints test failed", str(e))
+
+
 # ============== Test Runner ==============
 
 ALL_TESTS = {
@@ -433,6 +834,19 @@ ALL_TESTS = {
     "web_search": test_web_search,
     "full_pipeline": test_full_pipeline,
     "pipeline_history": test_full_pipeline_with_history,
+    # Session Management Tests
+    "session_inmemory": test_session_inmemory,
+    "session_history_limit": test_session_history_limit,
+    "session_expiry": test_session_expiry,
+    "session_serialization": test_session_serialization,
+    "session_redis": test_session_redis,
+    # Streaming Tests
+    "stream_event_format": test_stream_event_format,
+    "stream_timer": test_stream_timer,
+    "stream_pipeline_init": test_pipeline_streamer_init,
+    # API Tests
+    "api_health": test_api_health_endpoint,
+    "api_sessions": test_api_session_endpoints,
 }
 
 

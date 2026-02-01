@@ -1,18 +1,22 @@
 """
-CRAG Main Entry Point and Example Usage.
+CRAG - Corrective RAG for NeurIPS 2025 Papers.
 
-Demonstrates how to use the Corrective RAG workflow with Pinecone hybrid search.
-All LLM operations use Mistral Large.
+Query 130K+ paper chunks from NeurIPS 2025 using hybrid search (BM25 + semantic).
+All LLM operations use Mistral models.
 
 Usage (From the repo root):
 
-    python -m crag.main --question "What is GPT-4's MMLU score?"
+    # Single question
+    python -m crag.main --pinecone --question "What are the latest advances in reinforcement learning?"
 
-(Full demo)
-    python -m crag.main --mode demo
+    # Interactive mode
+    python -m crag.main --pinecone --mode interactive
 
-(Interactive mode)
-    python -m crag.main --mode interactive
+Required environment variables:
+    MISTRAL_API_KEY   - For LLM operations
+    PINECONE_API_KEY  - For vector search
+    COHERE_API_KEY    - For document reranking
+    TAVILY_API_KEY    - (Optional) For web search fallback
 """
 
 import os
@@ -25,6 +29,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from crag.retrieval import PineconeHybridRetriever, InMemoryHybridRetriever, Document
 from crag.graph import run_crag, stream_crag
+from crag.session import SessionManager
 
 
 def create_sample_documents() -> list[Document]:
@@ -117,7 +122,7 @@ MMLU is considered one of the most comprehensive benchmarks for evaluating broad
     ]
     
 
-def get_retriever(use_pinecone: bool = True, index_name: str = "crag-demo"):
+def get_retriever(use_pinecone: bool = True, index_name: str = "neurips-2025-hybrid"):
     """
     Get the appropriate retriever.
     
@@ -132,7 +137,8 @@ def get_retriever(use_pinecone: bool = True, index_name: str = "crag-demo"):
         print(f"Using Pinecone hybrid retriever (index: {index_name})")
         return PineconeHybridRetriever(
             index_name=index_name,
-            namespace="crag-demo"
+            namespace="",  # Use default namespace (where your data lives)
+            create_index=False  # Don't try to create, use existing
         )
     else:
         print("Using in-memory retriever (Pinecone not configured)")
@@ -217,33 +223,84 @@ def demo_streaming(use_pinecone: bool = False):
         print(f"  [{node_name}] documents={doc_count}, generation='{gen_preview}...'")
 
 
-def interactive_mode(use_pinecone: bool = False):
-    """Interactive query mode."""
+def interactive_mode(use_pinecone: bool = False, index_name: str = "neurips-2025-hybrid"):
+    """Interactive query mode with session-based conversation history."""
     print("\n" + "=" * 70)
-    print("INTERACTIVE MODE")
+    print("INTERACTIVE MODE (with session history)")
     print("=" * 70)
     print("\nEnter questions to query the CRAG system.")
-    print("Type 'quit' or 'exit' to stop.\n")
+    print("Commands:")
+    print("  'quit' or 'exit' - Exit the program")
+    print("  'new' or 'clear' - Start a new conversation (clear history)")
+    print("  'history' - Show conversation history")
+    print()
     
-    # Initialize retriever with sample documents
-    retriever = get_retriever(use_pinecone)
-    docs = create_sample_documents()
-    retriever.add_documents(docs)
-    print(f"Loaded {len(docs)} sample documents.\n")
+    # Initialize retriever (uses existing Pinecone index)
+    retriever = get_retriever(use_pinecone, index_name)
+    
+    # Initialize session manager (auto-detects Redis vs in-memory)
+    session_manager = SessionManager()
+    session = session_manager.create_session()
+    
+    print(f"Session ID: {session.id[:8]}...")
+    print(f"Storage: {session_manager.get_storage_type()}")
+    
+    # Show index stats
+    if use_pinecone:
+        try:
+            stats = retriever.get_stats()
+            total = stats.get('total_vector_count', 0)
+            print(f"Connected to index with {total:,} vectors.")
+        except Exception:
+            print("Connected to Pinecone index.")
+    
+    print()
     
     while True:
         try:
-            question = input("Question: ").strip()
+            # Show turn count in prompt
+            turn_count = session.turn_count()
+            prompt = f"[Turn {turn_count + 1}] Question: "
+            question = input(prompt).strip()
             
             if not question:
                 continue
             
+            # Handle commands
             if question.lower() in ('quit', 'exit', 'q'):
                 print("Goodbye!")
                 break
             
-            result = run_crag(question, retriever=retriever)
+            if question.lower() in ('new', 'clear'):
+                session = session_manager.create_session()
+                print(f"\n--- New session started (ID: {session.id[:8]}...) ---\n")
+                continue
             
+            if question.lower() == 'history':
+                history = session.get_history()
+                if not history:
+                    print("\n--- No conversation history ---\n")
+                else:
+                    print(f"\n--- Conversation History ({session.turn_count()} turns) ---")
+                    for i, msg in enumerate(history):
+                        role = msg['role'].upper()
+                        content = msg['content'][:100] + "..." if len(msg['content']) > 100 else msg['content']
+                        print(f"  [{role}]: {content}")
+                    print("-" * 40 + "\n")
+                continue
+            
+            # Run CRAG with session history
+            result = run_crag(
+                question, 
+                retriever=retriever,
+                history=session.get_history()  # Pass conversation history
+            )
+            
+            # Update session with this turn
+            session.add_turn(question, result["generation"])
+            session_manager.save_session(session)
+            
+            # Display results
             print("\n--- ANSWER ---")
             print(result["generation"])
             print("-" * 40)
@@ -252,6 +309,9 @@ def interactive_mode(use_pinecone: bool = False):
             print(f"Generation attempts: {result['generation_attempts']}")
             print(f"Generation grade: {result.get('generation_grade', 'N/A')}")
             print(f"Web search done: {result.get('web_search_done', False)}")
+            if result.get('rewritten_query') and result['rewritten_query'] != question:
+                print(f"Rewritten query: {result['rewritten_query']}")
+            print(f"Session turns: {session.turn_count()}")
             print("-" * 40 + "\n")
             
         except KeyboardInterrupt:
@@ -273,6 +333,8 @@ def main():
         return
     if not os.getenv("PINECONE_API_KEY"):
         print("Warning: PINECONE_API_KEY not set. Using in-memory retriever (not persistent).")
+    if not os.getenv("COHERE_API_KEY"):
+        print("Warning: COHERE_API_KEY not set. Document reranking will fail.")
     if not os.getenv("TAVILY_API_KEY"):
         print("Warning: TAVILY_API_KEY not set. Web search fallback will fail.")
     
@@ -298,8 +360,8 @@ def main():
     parser.add_argument(
         "--index",
         type=str,
-        default="crag-demo",
-        help="Pinecone index name (default: crag-demo)"
+        default="neurips-2025-hybrid",
+        help="Pinecone index name (default: neurips-2025-hybrid)"
     )
     
     args = parser.parse_args()
@@ -314,13 +376,12 @@ def main():
     if args.question:
         # Single question mode
         retriever = get_retriever(use_pinecone, args.index)
-        retriever.add_documents(create_sample_documents())
         result = run_crag(args.question, retriever=retriever)
         print("\n--- ANSWER ---")
         print(result["generation"])
         
     elif args.mode == "interactive":
-        interactive_mode(use_pinecone)
+        interactive_mode(use_pinecone, args.index)
         
     elif args.mode == "basic":
         demo_basic_query(use_pinecone)

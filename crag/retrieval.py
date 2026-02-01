@@ -129,7 +129,9 @@ class PineconeHybridRetriever:
             # Try loading persisted encoder first (preserves IDF from training corpus)
             if os.path.exists(self.bm25_path):
                 print(f"Loading BM25 encoder from {self.bm25_path}")
-                self._sparse_encoder = BM25Encoder.load(self.bm25_path)
+                # Use default() then load() for compatibility with different pinecone-text versions
+                encoder = BM25Encoder.default()
+                self._sparse_encoder = encoder.load(self.bm25_path)
             else:
                 self._sparse_encoder = BM25Encoder.default()
         
@@ -305,7 +307,8 @@ class PineconeHybridRetriever:
         documents = []
         for match in results.matches:
             metadata = match.metadata or {}
-            content = metadata.pop("content", "")
+            # Support both "text" (from upload_hybrid.py) and "content" (legacy)
+            content = metadata.pop("text", "")
             
             doc = Document(
                 content=content,

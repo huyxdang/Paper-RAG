@@ -11,8 +11,148 @@ import type {
   DoneEventData,
   ErrorEventData,
 } from "@/types/chat";
-import { STEP_LABELS } from "@/types/chat";
 import { buildStreamUrl, getSession, createSession } from "@/lib/api";
+
+/**
+ * Format granular log messages for each pipeline step.
+ * Returns an array of log entries for multi-line console output.
+ */
+function formatLogMessages(
+  step: string,
+  details?: Record<string, unknown>
+): Array<{ message: string; type: LogEntry["type"] }> {
+  const logs: Array<{ message: string; type: LogEntry["type"] }> = [];
+
+  switch (step) {
+    case "rewriting":
+      if (details?.changed) {
+        logs.push({ message: "Optimizing query for search...", type: "info" });
+        const original = details.original as string | undefined;
+        const rewritten = details.rewritten as string | undefined;
+        if (original) {
+          logs.push({
+            message: `Original: "${original.slice(0, 50)}${original.length > 50 ? "..." : ""}"`,
+            type: "info",
+          });
+        }
+        if (rewritten) {
+          logs.push({
+            message: `Rewritten: "${rewritten.slice(0, 50)}${rewritten.length > 50 ? "..." : ""}"`,
+            type: "success",
+          });
+        }
+      } else {
+        logs.push({ message: "Query already optimized", type: "info" });
+      }
+      break;
+
+    case "routing":
+      const decision = details?.decision as string | undefined;
+      const reasoning = details?.reasoning as string | undefined;
+      logs.push({ message: "Analyzing query intent...", type: "info" });
+      if (decision) {
+        const routeLabels: Record<string, string> = {
+          conversational: "CONVERSATIONAL",
+          vectorstore: "VECTORSTORE",
+          web_search: "WEB_SEARCH",
+        };
+        logs.push({
+          message: `Routed → ${routeLabels[decision] || decision.toUpperCase()}`,
+          type: "success",
+        });
+      }
+      if (reasoning) {
+        logs.push({
+          message: `Reason: ${reasoning}`,
+          type: "info",
+        });
+      }
+      break;
+
+    case "retrieving":
+      const count = (details?.count as number) || 0;
+      logs.push({ message: "Running hybrid search (vector + BM25)", type: "info" });
+      logs.push({ message: `Retrieved ${count} documents`, type: "success" });
+      break;
+
+    case "reranking":
+      const before = details?.before as number | undefined;
+      const after = details?.after as number | undefined;
+      logs.push({ message: "Applying Cohere reranking", type: "info" });
+      if (before !== undefined && after !== undefined) {
+        logs.push({ message: `Reranked: ${before} → ${after} documents`, type: "success" });
+      } else {
+        logs.push({ message: "Reranking complete", type: "success" });
+      }
+      break;
+
+    case "grading_docs":
+      const kept = details?.kept as number | undefined;
+      const needsWebSearch = details?.needs_web_search as boolean | undefined;
+      logs.push({ message: "Grading document relevance", type: "info" });
+      if (kept !== undefined) {
+        logs.push({ message: `Kept ${kept} relevant documents`, type: "success" });
+      }
+      if (needsWebSearch) {
+        logs.push({ message: "Web search fallback triggered", type: "warning" });
+      }
+      break;
+
+    case "web_search":
+      if (details?.skipped) {
+        logs.push({
+          message: `Web search skipped: ${details.reason || "not configured"}`,
+          type: "warning",
+        });
+      } else if (details?.error) {
+        logs.push({ message: `Web search error: ${details.error}`, type: "error" });
+      } else {
+        const webCount = (details?.count as number) || 0;
+        logs.push({ message: "Searching the web...", type: "info" });
+        logs.push({ message: `Found ${webCount} web results`, type: "success" });
+      }
+      break;
+
+    case "generating":
+      if (details?.mode === "conversational") {
+        logs.push({ message: "Generating conversational response...", type: "metric" });
+      } else if (details?.status === "starting") {
+        const docCount = details.doc_count as number | undefined;
+        logs.push({
+          message: `Generating answer from ${docCount || "?"} documents...`,
+          type: "metric",
+        });
+      } else if (details?.status === "complete") {
+        const tokens = details.tokens as number | undefined;
+        logs.push({ message: `Generated ${tokens || "?"} tokens`, type: "success" });
+      } else {
+        logs.push({ message: "Generating answer...", type: "metric" });
+      }
+      break;
+
+    case "extracting_citations":
+      const citationCount = (details?.count as number) || 0;
+      logs.push({ message: `Extracted ${citationCount} citations`, type: "success" });
+      break;
+
+    case "grading_gen":
+      if (details?.skipped) {
+        logs.push({ message: "Answer grading skipped", type: "warning" });
+      } else {
+        const grade = details?.grade as string | undefined;
+        logs.push({
+          message: `Answer grade: ${grade || "unknown"}`,
+          type: grade === "useful" ? "success" : "warning",
+        });
+      }
+      break;
+
+    default:
+      logs.push({ message: step, type: "info" });
+  }
+
+  return logs;
+}
 
 // Session storage key
 const SESSION_KEY = "crag_session_id";
@@ -194,29 +334,15 @@ export function useChat(): UseChatReturn {
           setStepLatency(data.latency_ms);
 
           const latencyStr = data.latency_ms ? `${data.latency_ms}ms` : undefined;
-          
-          // Determine log type based on step
-          let logType: LogEntry["type"] = "info";
-          if (data.step === "generating") {
-            logType = "metric";
-          } else if (data.details?.skipped) {
-            logType = "warning";
-          }
 
-          // Special formatting for routing decision
-          if (data.step === "routing" && data.details?.decision) {
-            const routeLabels: Record<string, string> = {
-              conversational: "CONVERSATIONAL",
-              vectorstore: "VECTORSTORE", 
-              web_search: "WEB_SEARCH"
-            };
-            const decision = data.details.decision as string;
-            const label = routeLabels[decision] || decision.toUpperCase();
-            addLog(`Routed → ${label}`, "info", latencyStr, data.details);
-          } else {
-            const stepLabel = STEP_LABELS[data.step] || data.step;
-            addLog(stepLabel, logType, latencyStr, data.details);
-          }
+          // Get granular log messages for this step
+          const logMessages = formatLogMessages(data.step, data.details);
+          
+          // Add all log messages, with latency only on the last one
+          logMessages.forEach((log, idx) => {
+            const showLatency = idx === logMessages.length - 1 ? latencyStr : undefined;
+            addLog(log.message, log.type, showLatency, data.details);
+          });
         } catch {
           console.error("Failed to parse status event:", event.data);
         }
