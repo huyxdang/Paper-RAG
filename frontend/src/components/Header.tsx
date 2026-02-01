@@ -26,7 +26,7 @@ export function Header({ onNewChat, paperCount = 6142 }: HeaderProps) {
         {/* Paper count */}
         <div className="flex items-center gap-1.5 text-xs text-zinc-500">
           <Database size={12} />
-          <span className="font-mono">INDEX: 173,990</span>
+          <span className="font-mono">knowledge_base: 173,990 records</span>
         </div>
         
         {/* New Chat button */}
