@@ -17,80 +17,17 @@
 
 ## Overview
 
-PaperRAG is a production-ready Retrieval-Augmented Generation (RAG) system that enables conversational exploration of ~6,000 NeurIPS 2025 research papers. It implements a **Corrective RAG (CRAG)** architecture with intelligent query routing, hybrid search, document grading.
+PaperRAG is a production-ready Retrieval-Augmented Generation (RAG) system that enables conversational exploration of ~6,000 NeurIPS 2025 research papers. 
 
-It is powered by **Mistral** models (Mistral Large, Mistral Small, Ministral 3B, Mistral Embed), Cohere (Re-ranker) and Tavily (Web-search). The RAG flow was orchestrated with LangGraph.
+Implements [**Adaptive RAG**](https://arxiv.org/pdf/2403.14403), [**Corrective RAG**](https://arxiv.org/pdf/2401.15884), and [**Self-RAG**](https://arxiv.org/pdf/2310.11511), orchestrated with LangGraph. 
 
-## Corrective RAG Flow
+Powered by **Mistral models** (Mistral Large, Mistral Small, Ministral 3B, Mistral Embed), Cohere (Re-ranker) and Tavily (Web-search).
 
-```mermaid
-flowchart TD
-    subgraph Frontend["Frontend (Next.js)"]
-        UI[Chat Interface]
-        SSE[SSE Stream Consumer]
-    end
+## RAG Flow
 
-    subgraph Backend["Backend (FastAPI)"]
-        API["/chat/stream"]
-        Session[Session Manager]
-    end
-
-    subgraph Pipeline["CRAG Pipeline"]
-        Router[Query Router]
-        Rewriter[Query Rewriter]
-        Retriever[Hybrid Retriever]
-        Reranker[Cohere Reranker]
-        DocGrader[Document Grader]
-        WebSearch[Web Search]
-        Generator[Answer Generator]
-        CitationExtractor[Citation Extractor]
-        GenGrader[Generation Grader]
-    end
-
-    subgraph Storage["Storage"]
-        Pinecone[(Pinecone Vector DB)]
-        Redis[(Redis Sessions)]
-    end
-
-    subgraph LLMs["LLM Services"]
-        MistralLarge[Mistral Large]
-        MistralSmall[Mistral Small]
-        Ministral3B[Ministral 3B]
-        MistralEmbed[Mistral Embed]
-        CohereRerank[Cohere Rerank v3.5]
-    end
-
-    UI --> SSE
-    SSE --> API
-    API --> Session
-    Session --> Redis
-
-    API --> Router
-    Router -->|conversational| Generator
-    Router -->|vectorstore| Rewriter
-    Router -->|web_search| WebSearch
-
-    Rewriter --> Retriever
-    Retriever --> Pinecone
-    Retriever --> Reranker
-    Reranker --> CohereRerank
-    Reranker --> DocGrader
-
-    DocGrader -->|relevant docs| Generator
-    DocGrader -->|needs more| WebSearch
-    WebSearch --> Generator
-
-    Generator --> CitationExtractor
-    CitationExtractor --> GenGrader
-    GenGrader --> API
-
-    Router --> Ministral3B
-    Rewriter --> MistralSmall
-    DocGrader --> MistralLarge
-    Generator --> MistralLarge
-    GenGrader --> MistralSmall
-    Retriever --> MistralEmbed
-```
+<p>
+  <img src="public/RAG-flow.png" alt="Rag-workflow"/>
+</p>
 
 ### Pipeline Flow
 
