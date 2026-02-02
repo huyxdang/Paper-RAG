@@ -9,8 +9,8 @@ const jetbrainsMono = JetBrains_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "PaperRAG - NeurIPS 2025",
-  description: "AI-powered assistant for exploring NeurIPS 2025 papers with structured citations",
+  title: "PaperRAG",
+  description: "AI-powered assistant for exploring research papers in AI and Machine Learning",
 };
 
 export default function RootLayout({

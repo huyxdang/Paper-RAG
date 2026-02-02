@@ -16,9 +16,8 @@ from mistralai import Mistral
 from .graph_state import GraphState, Message
 from .retrieval import Document, HybridRetriever, PineconeHybridRetriever, InMemoryHybridRetriever
 from .graders import (
-    QueryRouter, 
-    QueryRewriter,
-    DocumentGrader, 
+    QueryRewriterAndRouter,
+    DocumentGrader,
     DocumentReranker,
     GenerationGrader,
 )
@@ -34,8 +33,7 @@ RetrieverType = Union[HybridRetriever, PineconeHybridRetriever, InMemoryHybridRe
 
 def create_crag_graph(
     retriever: RetrieverType,
-    router: Optional[QueryRouter] = None,
-    query_rewriter: Optional[QueryRewriter] = None,
+    query_processor: Optional[QueryRewriterAndRouter] = None,
     doc_grader: Optional[DocumentGrader] = None,
     doc_reranker: Optional[DocumentReranker] = None,
     gen_grader: Optional[GenerationGrader] = None,
@@ -51,9 +49,7 @@ def create_crag_graph(
     
     Graph Structure:
     ```
-    START → rewrite_query (uses history for standalone query)
-                ↓
-           route_question
+    START → process_query (rewrite + route in one LLM call)
                 ↓
         ┌───────┼───────────────┐
         ↓       ↓               ↓
@@ -78,8 +74,7 @@ def create_crag_graph(
     
     Args:
         retriever: Required HybridRetriever instance for vectorstore retrieval.
-        router: Optional QueryRouter (defaults to new instance)
-        query_rewriter: Optional QueryRewriter for history-aware query rewriting
+        query_processor: Optional QueryRewriterAndRouter (defaults to new instance)
         doc_grader: Optional DocumentGrader (defaults to new instance)
         doc_reranker: Optional DocumentReranker for reranking retrieved docs
         gen_grader: Optional GenerationGrader (defaults to new instance)
@@ -91,8 +86,7 @@ def create_crag_graph(
         StateGraph workflow (call .compile() to get executable)
     """
     # Default instantiation for optional dependencies (each uses its optimal model)
-    router = router or QueryRouter()              # ministral-3b (fast routing)
-    query_rewriter = query_rewriter or QueryRewriter()  # mistral-small (query rewriting)
+    query_processor = query_processor or QueryRewriterAndRouter()  # mistral-small (rewrite + route)
     doc_grader = doc_grader or DocumentGrader()   # mistral-large (context understanding)
     doc_reranker = doc_reranker or DocumentReranker()   # cohere/cross-encoder (reranking)
     gen_grader = gen_grader or GenerationGrader() # mistral-small (grading balance)
@@ -112,48 +106,23 @@ def create_crag_graph(
     
     # ============== Node Definitions (Closures) ==============
     
-    def rewrite_query(state: GraphState) -> GraphState:
-        """Rewrite and optimize the user's question for better retrieval.
-        
-        Always runs to:
-        1. Condense verbose queries into focused search terms
-        2. Make follow-up questions self-contained using history
-        """
-        print("---REWRITING QUERY---")
+    def process_query(state: GraphState) -> GraphState:
+        """Rewrite the question (using history) and route in one LLM call."""
+        print("---PROCESSING QUERY (rewrite + route)---")
         question = state["question"]
         history = state.get("history", [])
         
-        # Always run rewriter for query optimization (condensation + self-containment)
-        result = query_rewriter.rewrite(question, history)
-        
-        query_changed = result.query.lower().strip() != question.lower().strip()
+        result = query_processor.process(question, history)
         
         print(f"  Original: {question}")
         print(f"  Rewritten: {result.query}")
-        if query_changed:
-            print(f"  Reasoning: {result.reasoning}")
-        else:
-            print(f"  (No significant changes)")
-        
-        return {
-            **state,
-            "rewritten_query": result.query
-        }
-    
-    def route_question(state: GraphState) -> GraphState:
-        """Route the question to vectorstore or web search."""
-        print("---ROUTING QUESTION---")
-        # Use rewritten query for routing if available
-        question = state.get("rewritten_query") or state["question"]
-        
-        result = router.route(question)
-        
-        print(f"  Route decision: {result.datasource}")
+        print(f"  Route: {result.route}")
         print(f"  Reasoning: {result.reasoning}")
         
         return {
             **state,
-            "route_decision": result.datasource
+            "rewritten_query": result.query,
+            "route_decision": result.route,
         }
     
     def retrieve(state: GraphState) -> GraphState:
@@ -445,9 +414,8 @@ Instructions:
     workflow = StateGraph(GraphState)
     
     # Add nodes
-    workflow.add_node("rewrite_query", rewrite_query)
-    workflow.add_node("route_question", route_question)
-    workflow.add_node("generate_conversational", generate_conversational)  # NEW
+    workflow.add_node("process_query", process_query)
+    workflow.add_node("generate_conversational", generate_conversational)
     workflow.add_node("retrieve", retrieve)
     workflow.add_node("rerank_documents", rerank_documents)
     workflow.add_node("grade_documents", grade_documents)
@@ -455,18 +423,15 @@ Instructions:
     workflow.add_node("generate", generate)
     workflow.add_node("grade_generation", grade_generation)
     
-    # Set entry point - start with query rewriting
-    workflow.set_entry_point("rewrite_query")
+    # Set entry point - start with combined rewrite + route
+    workflow.set_entry_point("process_query")
     
-    # Edge: rewrite_query → route_question
-    workflow.add_edge("rewrite_query", "route_question")
-    
-    # Conditional Edge: route_question → conversational, vectorstore, OR web_search
+    # Conditional Edge: process_query → conversational, vectorstore, OR web_search
     workflow.add_conditional_edges(
-        "route_question",
+        "process_query",
         route_after_question_routing,
         {
-            "conversational": "generate_conversational",  # NEW
+            "conversational": "generate_conversational",
             "vectorstore": "retrieve",
             "web_search": "web_search",
         }
@@ -511,8 +476,7 @@ Instructions:
 
 def compile_crag_graph(
     retriever: RetrieverType,
-    router: Optional[QueryRouter] = None,
-    query_rewriter: Optional[QueryRewriter] = None,
+    query_processor: Optional[QueryRewriterAndRouter] = None,
     doc_grader: Optional[DocumentGrader] = None,
     doc_reranker: Optional[DocumentReranker] = None,
     gen_grader: Optional[GenerationGrader] = None,
@@ -525,8 +489,7 @@ def compile_crag_graph(
     
     Args:
         retriever: Required HybridRetriever for vectorstore
-        router: Optional QueryRouter
-        query_rewriter: Optional QueryRewriter for history-aware queries
+        query_processor: Optional QueryRewriterAndRouter for rewrite + route
         doc_grader: Optional DocumentGrader
         doc_reranker: Optional DocumentReranker
         gen_grader: Optional GenerationGrader
@@ -539,8 +502,7 @@ def compile_crag_graph(
     """
     workflow = create_crag_graph(
         retriever=retriever,
-        router=router,
-        query_rewriter=query_rewriter,
+        query_processor=query_processor,
         doc_grader=doc_grader,
         doc_reranker=doc_reranker,
         gen_grader=gen_grader,
@@ -555,8 +517,7 @@ def run_crag(
     question: str,
     retriever: RetrieverType,
     history: Optional[List[Message]] = None,
-    router: Optional[QueryRouter] = None,
-    query_rewriter: Optional[QueryRewriter] = None,
+    query_processor: Optional[QueryRewriterAndRouter] = None,
     doc_grader: Optional[DocumentGrader] = None,
     doc_reranker: Optional[DocumentReranker] = None,
     gen_grader: Optional[GenerationGrader] = None,
@@ -572,8 +533,7 @@ def run_crag(
         question: The user's question
         retriever: Required Retriever instance (PineconeHybridRetriever recommended)
         history: Optional conversation history for multi-turn support
-        router: Optional QueryRouter
-        query_rewriter: Optional QueryRewriter for history-aware queries
+        query_processor: Optional QueryRewriterAndRouter for rewrite + route
         doc_grader: Optional DocumentGrader
         doc_reranker: Optional DocumentReranker
         gen_grader: Optional GenerationGrader
@@ -636,8 +596,7 @@ def run_crag(
     # Compile and run graph
     app = compile_crag_graph(
         retriever=retriever,
-        router=router,
-        query_rewriter=query_rewriter,
+        query_processor=query_processor,
         doc_grader=doc_grader,
         doc_reranker=doc_reranker,
         gen_grader=gen_grader,
@@ -673,8 +632,7 @@ def stream_crag(
     question: str,
     retriever: RetrieverType,
     history: Optional[List[Message]] = None,
-    router: Optional[QueryRouter] = None,
-    query_rewriter: Optional[QueryRewriter] = None,
+    query_processor: Optional[QueryRewriterAndRouter] = None,
     doc_grader: Optional[DocumentGrader] = None,
     doc_reranker: Optional[DocumentReranker] = None,
     gen_grader: Optional[GenerationGrader] = None,
@@ -691,8 +649,7 @@ def stream_crag(
         question: The user's question
         retriever: Required HybridRetriever instance
         history: Optional conversation history for multi-turn support
-        router: Optional QueryRouter
-        query_rewriter: Optional QueryRewriter for history-aware queries
+        query_processor: Optional QueryRewriterAndRouter for rewrite + route
         doc_grader: Optional DocumentGrader
         doc_reranker: Optional DocumentReranker
         gen_grader: Optional GenerationGrader
@@ -722,8 +679,7 @@ def stream_crag(
     
     app = compile_crag_graph(
         retriever=retriever,
-        router=router,
-        query_rewriter=query_rewriter,
+        query_processor=query_processor,
         doc_grader=doc_grader,
         doc_reranker=doc_reranker,
         gen_grader=gen_grader,

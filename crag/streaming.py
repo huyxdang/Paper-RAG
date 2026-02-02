@@ -30,8 +30,7 @@ from mistralai import Mistral
 from .graph_state import GraphState, Message
 from .retrieval import Document, HybridRetriever, PineconeHybridRetriever, InMemoryHybridRetriever
 from .graders import (
-    QueryRouter,
-    QueryRewriter,
+    QueryRewriterAndRouter,
     DocumentGrader,
     DocumentReranker,
     GenerationGrader,
@@ -188,8 +187,7 @@ class PipelineStreamer:
     def __init__(
         self,
         retriever: RetrieverType,
-        router: Optional[QueryRouter] = None,
-        query_rewriter: Optional[QueryRewriter] = None,
+        query_processor: Optional[QueryRewriterAndRouter] = None,
         doc_grader: Optional[DocumentGrader] = None,
         doc_reranker: Optional[DocumentReranker] = None,
         gen_grader: Optional[GenerationGrader] = None,
@@ -204,8 +202,7 @@ class PipelineStreamer:
         
         Args:
             retriever: Required retriever instance
-            router: Optional QueryRouter (created if None)
-            query_rewriter: Optional QueryRewriter (created if None)
+            query_processor: Optional QueryRewriterAndRouter (created if None)
             doc_grader: Optional DocumentGrader (created if None)
             doc_reranker: Optional DocumentReranker (created if None)
             gen_grader: Optional GenerationGrader (created if None)
@@ -216,8 +213,7 @@ class PipelineStreamer:
             use_citations: Whether to use structured citations (default: True)
         """
         self.retriever = retriever
-        self.router = router or QueryRouter()
-        self.query_rewriter = query_rewriter or QueryRewriter()
+        self.query_processor = query_processor or QueryRewriterAndRouter()
         self.doc_grader = doc_grader or DocumentGrader()
         self.doc_reranker = doc_reranker or DocumentReranker()
         self.gen_grader = gen_grader or GenerationGrader()
@@ -294,37 +290,26 @@ class PipelineStreamer:
         }
         
         try:
-            # Step 1: Rewrite/optimize query (always runs for self-containment with history)
+            # Step 1: Process query (rewrite + route in one LLM call)
             timer.start()
-            result = self.query_rewriter.rewrite(question, history)
+            result = self.query_processor.process(question, history)
             state["rewritten_query"] = result.query
+            state["route_decision"] = result.route
             query_for_search = result.query
             
-            # Only show rewrite details if the query actually changed
-            query_changed = result.query.lower().strip() != question.lower().strip()
             yield status_event(
-                step="rewriting",
+                step="processing",
                 latency_ms=timer.elapsed_ms(),
                 details={
                     "original": question,
                     "rewritten": result.query,
-                    "changed": query_changed,
-                    "had_history": bool(history),
+                    "route": result.route,
+                    "reasoning": result.reasoning[:200],
                 }
             )
             
-            # Step 2: Route question (using rewritten query)
-            timer.start()
-            route_result = self.router.route(query_for_search)
-            state["route_decision"] = route_result.datasource
-            yield status_event(
-                step="routing",
-                latency_ms=timer.elapsed_ms(),
-                details={"decision": route_result.datasource, "reasoning": route_result.reasoning[:200]}
-            )
-            
-            # Step 3: Handle conversational route
-            if route_result.datasource == "conversational":
+            # Step 2: Handle conversational route
+            if result.route == "conversational":
                 # Conversational response - skip retrieval entirely
                 yield from self._generate_conversational(question, state, timer)
                 # Done event for conversational
@@ -337,8 +322,8 @@ class PipelineStreamer:
                 )
                 return  # Exit early, no need for grading
             
-            # Step 4: Route to appropriate handler
-            if route_result.datasource == "web_search":
+            # Step 3: Route to appropriate handler
+            if result.route == "web_search":
                 # Direct to web search
                 yield from self._do_web_search(state, timer)
             else:

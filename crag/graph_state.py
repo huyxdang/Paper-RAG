@@ -27,7 +27,7 @@ class GraphState(TypedDict):
         web_search_done: Whether web search has already been performed (prevents redundant calls)
         generation_attempts: Counter for generation retry loops
         generation_grade: Result of grading the generation ("useful", "not supported", "not useful")
-        route_decision: The routing decision ("vectorstore" or "web_search")
+        route_decision: The routing decision ("conversational", "vectorstore", or "web_search")
     """
     question: str
     rewritten_query: Optional[str]
@@ -38,4 +38,4 @@ class GraphState(TypedDict):
     web_search_done: bool
     generation_attempts: int
     generation_grade: Optional[Literal["useful", "not supported", "not useful"]]
-    route_decision: Optional[Literal["vectorstore", "web_search"]]
+    route_decision: Optional[Literal["conversational", "vectorstore", "web_search"]]

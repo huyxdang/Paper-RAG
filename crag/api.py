@@ -30,6 +30,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 import asyncio
+import threading
 from typing import Optional, AsyncGenerator
 from contextlib import asynccontextmanager
 
@@ -319,55 +320,68 @@ async def chat_stream(
     print(f"[Session] Requested: {session_id}, Using: {session.id}, Turns: {session.turn_count()}, History length: {len(session.get_history())}")
     
     async def event_generator() -> AsyncGenerator[dict, None]:
-        """Generate SSE events from the pipeline."""
+        """Generate SSE events from the pipeline. Run sync stream in a thread so we
+        yield each event without blocking the event loop, allowing SSE to flush immediately.
+        """
         answer = ""
-        
-        try:
-            streamer = get_streamer()
-            
-            # Run pipeline in thread pool to not block async loop
-            # (the streaming is sync, so we yield events as they come)
-            loop = asyncio.get_event_loop()
-            
-            def run_stream():
-                return list(streamer.stream(
+        queue: asyncio.Queue = asyncio.Queue()
+        loop = asyncio.get_event_loop()
+        stream_error: Optional[Exception] = None
+
+        def run_stream() -> None:
+            nonlocal stream_error
+            try:
+                streamer = get_streamer()
+                for event in streamer.stream(
                     question=question,
                     history=session.get_history(),
                     session_id=session.id,
-                ))
-            
-            # For now, run synchronously since the stream is a generator
-            # In production, consider using asyncio.to_thread
-            for event in streamer.stream(
-                question=question,
-                history=session.get_history(),
-                session_id=session.id,
-            ):
-                # Collect answer tokens
+                ):
+                    loop.call_soon_threadsafe(queue.put_nowait, event)
+            except Exception as e:
+                stream_error = e
+            finally:
+                loop.call_soon_threadsafe(queue.put_nowait, None)
+
+        thread = threading.Thread(target=run_stream)
+        thread.start()
+
+        try:
+            while True:
+                event = await queue.get()
+                if event is None:
+                    break
                 if event.event == "token":
                     answer += event.data.get("content", "")
-                
-                # Yield event with correct event type for SSE
                 yield {
-                    "event": event.event,  # Use actual event type: status, token, done, etc.
+                    "event": event.event,
                     "data": json.dumps(event.data),
                 }
-            
-            # Update session after completion
+            if stream_error:
+                raise stream_error
             if answer:
                 session.add_turn(question, answer)
                 session_manager.save_session(session)
                 print(f"[Session] Saved: {session.id}, Turns: {session.turn_count()}")
-                
         except Exception as e:
             print(f"Stream error: {e}")
             traceback.print_exc()
             yield {
                 "event": "error",
-                "data": json.dumps({"message": str(e)})
+                "data": json.dumps({"message": str(e)}),
             }
-    
-    return EventSourceResponse(event_generator())
+        finally:
+            thread.join(timeout=1.0)
+
+    # Disable response buffering so status logs reach the client as each step completes
+    return EventSourceResponse(
+        event_generator(),
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+            "Connection": "keep-alive",
+        },
+    )
 
 
 @app.get("/sessions/{session_id}")

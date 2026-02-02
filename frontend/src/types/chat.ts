@@ -95,6 +95,7 @@ export interface StreamEvent {
 // ============== Pipeline Step Names ==============
 
 export const STEP_LABELS: Record<string, string> = {
+  processing: "Processing query",
   rewriting: "Rewriting query",
   routing: "Analyzing question",
   retrieving: "Searching documents",

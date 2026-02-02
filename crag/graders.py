@@ -18,6 +18,8 @@ from pydantic import BaseModel, Field
 from .config import (
     ROUTER_MODEL,
     REWRITER_MODEL,
+    QUERY_PROCESSOR_MODEL,
+    QUERY_PROCESSOR_SYSTEM_PROMPT,
     DOC_GRADER_MODEL,
     GEN_GRADER_MODEL,
     GENERATION_MODEL,
@@ -72,6 +74,19 @@ class RewrittenQuery(BaseModel):
     )
     reasoning: str = Field(
         description="Brief explanation of how the query was rewritten."
+    )
+
+
+class RewriteAndRoute(BaseModel):
+    """Combined rewrite and route decision from a single LLM call."""
+    query: str = Field(
+        description="Rewritten standalone query (or original if unchanged for greetings/off-topic)."
+    )
+    route: Literal["conversational", "vectorstore", "web_search"] = Field(
+        description="Route: conversational (greetings/chitchat/meta-refs), vectorstore (AI/ML research), web_search (current events/non-research)."
+    )
+    reasoning: str = Field(
+        description="Brief explanation for the rewrite and route decision."
     )
 
 
@@ -439,6 +454,64 @@ Rewrite the question as a standalone search query."""
         ]
         
         return client.invoke_structured(messages, RewrittenQuery)
+
+
+class QueryRewriterAndRouter:
+    """
+    Single LLM call that rewrites the query (using history) and routes the request.
+    
+    Uses mistral-small for combined rewrite + route. Fixes bugs where router
+    didn't see history (e.g. "the first one!" wrongly routed to conversational).
+    """
+    
+    def __init__(self, model: str = QUERY_PROCESSOR_MODEL):
+        self.model = model
+        self._client = None
+        
+    def _get_client(self) -> MistralStructuredClient:
+        if self._client is None:
+            self._client = MistralStructuredClient(self.model)
+        return self._client
+    
+    def process(
+        self,
+        question: str,
+        history: Optional[List[dict]] = None,
+    ) -> RewriteAndRoute:
+        """
+        Rewrite the question (using history) and decide route in one LLM call.
+        
+        Args:
+            question: The user's current message
+            history: Optional list of previous messages [{"role": "user"|"assistant", "content": "..."}]
+            
+        Returns:
+            RewriteAndRoute with query, route (conversational | vectorstore | web_search), and reasoning
+        """
+        client = self._get_client()
+        
+        history_text = ""
+        if history:
+            history_parts = []
+            for msg in history[-6:]:
+                role = msg.get("role", "user").upper()
+                content = msg.get("content", "")[:MAX_HISTORY_LENGTH]
+                history_parts.append(f"{role}: {content}")
+            history_text = "\n".join(history_parts)
+        
+        user_content = f"""Conversation History:
+{history_text if history_text else "(No previous conversation)"}
+
+Current User Message: {question}
+
+Output: rewritten query (or unchanged for greetings/off-topic), route (conversational | vectorstore | web_search), and brief reasoning."""
+
+        messages = [
+            {"role": "system", "content": QUERY_PROCESSOR_SYSTEM_PROMPT},
+            {"role": "user", "content": user_content},
+        ]
+        
+        return client.invoke_structured(messages, RewriteAndRoute)
 
 
 class DocumentReranker:

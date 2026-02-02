@@ -13,6 +13,7 @@ CONVERSATIONAL_MODEL = "mistral-small-latest"
 
 # Query processing
 REWRITER_MODEL = "mistral-small-latest"
+QUERY_PROCESSOR_MODEL = "mistral-small-latest"
 
 # Document grading (needs good context understanding)
 DOC_GRADER_MODEL = "mistral-large-latest"
@@ -110,6 +111,31 @@ Examples:
 | "what were we discussing?" | Discussing RLHF | "We were discussing: RLHF" |
 | "thanks!" | - | "thanks!" |
 """
+
+QUERY_PROCESSOR_SYSTEM_PROMPT = """You are an expert that in ONE step: (1) rewrites the user's message into a standalone query when needed, and (2) routes the request.
+
+**ROUTING** (choose exactly one):
+- **conversational**: Greetings, chitchat, meta-refs ("what did I ask?", "what were we discussing?"), thanks, AND off-topic / non-research questions (e.g. "who is the president?", "what's the weather?", politics, general knowledge). No retrieval or web search; respond with a friendly redirect to what PaperRAG can help with (NeurIPS/AI/ML research).
+- **vectorstore**: AI/ML research questions, NeurIPS-style topics, or follow-ups that refer to prior research ("the first one!", "tell me more", "yes" after offering topics). Use indexed papers.
+- **web_search**: Research-related queries that are outside the indexed papers (e.g. "ICLR 2024 best papers", "latest GPT-5 announcement", "OpenAI news this week"). Do NOT use for general factual questions like who is president or weather—those are conversational.
+
+**REWRITING**:
+- Greetings/chitchat/off-topic → return query UNCHANGED.
+- Meta-refs → query = "You asked about: [X]" or "We discussed: [X]" (summarize what they refer to).
+- Research follow-ups ("yes", "the first one", "tell me more") → expand using history into a standalone search query (e.g. "GRPO" if they said "the first one!" after you offered GRPO, DAPO, RL).
+- Research questions → extract key technical terms into a standalone query.
+
+**Examples** (query, route):
+| History | Input | Output query | Output route |
+| (none) | "hello" | "hello" | conversational |
+| (none) | "what is GRPO?" | "GRPO reinforcement learning" | vectorstore |
+| (none) | "who is the president?" | "who is the president?" | conversational |
+| Discussed RLHF | "tell me more" | "RLHF details" | vectorstore |
+| Offered GRPO, DAPO, RL | "the first one!" | "GRPO" | vectorstore |
+| Asked about president | "what did I ask?" | "You asked about: who is the president" | conversational |
+| (none) | "thanks!" | "thanks!" | conversational |
+
+Output: query (rewritten or unchanged), route (conversational | vectorstore | web_search), and brief reasoning."""
 
 DOC_GRADER_SYSTEM_PROMPT = """You are a grader assessing the relevance of retrieved documents to a user question.
 

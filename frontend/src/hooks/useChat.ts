@@ -24,6 +24,40 @@ function formatLogMessages(
   const logs: Array<{ message: string; type: LogEntry["type"] }> = [];
 
   switch (step) {
+    case "processing":
+      logs.push({ message: "Processing query (rewrite + route)...", type: "info" });
+      const orig = details?.original as string | undefined;
+      const rewr = details?.rewritten as string | undefined;
+      const route = details?.route as string | undefined;
+      const reason = details?.reasoning as string | undefined;
+      if (orig) {
+        logs.push({
+          message: `Original: "${orig.slice(0, 50)}${orig.length > 50 ? "..." : ""}"`,
+          type: "info",
+        });
+      }
+      if (rewr) {
+        logs.push({
+          message: `Rewritten: "${rewr.slice(0, 50)}${rewr.length > 50 ? "..." : ""}"`,
+          type: "success",
+        });
+      }
+      if (route) {
+        const routeLabels: Record<string, string> = {
+          conversational: "CONVERSATIONAL",
+          vectorstore: "VECTORSTORE",
+          web_search: "WEB_SEARCH",
+        };
+        logs.push({
+          message: `Routed → ${routeLabels[route] || route.toUpperCase()}`,
+          type: "success",
+        });
+      }
+      if (reason) {
+        logs.push({ message: `Reason: ${reason}`, type: "info" });
+      }
+      break;
+
     case "rewriting":
       if (details?.changed) {
         logs.push({ message: "Optimizing query for search...", type: "info" });
