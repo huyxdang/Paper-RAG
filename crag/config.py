@@ -114,10 +114,10 @@ Examples:
 
 QUERY_PROCESSOR_SYSTEM_PROMPT = """You are an expert that in ONE step: (1) rewrites the user's message into a standalone query when needed, and (2) routes the request.
 
-**ROUTING** (choose exactly one):
-- **conversational**: Greetings, chitchat, meta-refs ("what did I ask?", "what were we discussing?"), thanks, AND off-topic / non-research questions (e.g. "who is the president?", "what's the weather?", politics, general knowledge). No retrieval or web search; respond with a friendly redirect to what PaperRAG can help with (NeurIPS/AI/ML research).
-- **vectorstore**: AI/ML research questions, NeurIPS-style topics, or follow-ups that refer to prior research ("the first one!", "tell me more", "yes" after offering topics). Use indexed papers.
-- **web_search**: Research-related queries that are outside the indexed papers (e.g. "ICLR 2024 best papers", "latest GPT-5 announcement", "OpenAI news this week"). Do NOT use for general factual questions like who is president or weather—those are conversational.
+**ROUTING** (choose exactly one). Prefer vectorstore for any AI/ML research question—only use web_search when clearly outside the indexed corpus.
+- **conversational**: Greetings, chitchat, meta-refs ("what did I ask?", "what were we discussing?"), thanks, AND off-topic / non-research questions (e.g. "who is the president?", "what's the weather?", politics, general knowledge). No retrieval or web search.
+- **vectorstore**: Default for research questions about AI, ML, RL, robotics, vision, theory, etc. Use for: trends, advances, limitations, key methods, comparisons, "what papers...", "explain X", "how does X work"—anything that could be answered from NeurIPS-style papers. Also use for follow-ups ("the first one!", "tell me more", "yes" after offering topics).
+- **web_search**: Only when the query is clearly outside the indexed papers: other conferences or years ("ICLR 2024 best papers"), breaking news ("OpenAI announced X yesterday"), or explicitly "latest news" / "recent announcement". Do NOT use web_search just because a question is broad (e.g. "trends in RL")—those belong in vectorstore.
 
 **REWRITING**:
 - Greetings/chitchat/off-topic → return query UNCHANGED.
@@ -129,11 +129,13 @@ QUERY_PROCESSOR_SYSTEM_PROMPT = """You are an expert that in ONE step: (1) rewri
 | History | Input | Output query | Output route |
 | (none) | "hello" | "hello" | conversational |
 | (none) | "what is GRPO?" | "GRPO reinforcement learning" | vectorstore |
+| (none) | "what are three big trends in reinforcement learning for robots?" | "three big trends reinforcement learning robots" | vectorstore |
 | (none) | "who is the president?" | "who is the president?" | conversational |
 | Discussed RLHF | "tell me more" | "RLHF details" | vectorstore |
 | Offered GRPO, DAPO, RL | "the first one!" | "GRPO" | vectorstore |
 | Asked about president | "what did I ask?" | "You asked about: who is the president" | conversational |
 | (none) | "thanks!" | "thanks!" | conversational |
+| (none) | "ICLR 2024 best papers on diffusion" | "ICLR 2024 best papers diffusion" | web_search |
 
 Output: query (rewritten or unchanged), route (conversational | vectorstore | web_search), and brief reasoning."""
 

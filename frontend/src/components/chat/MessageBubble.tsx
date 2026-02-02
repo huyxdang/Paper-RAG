@@ -2,6 +2,9 @@
 
 import { useState, useMemo, useCallback } from "react";
 import ReactMarkdown from "react-markdown";
+import remarkMath from "remark-math";
+import rehypeKatex from "rehype-katex";
+import "katex/dist/katex.min.css";
 import type { Message, Citation } from "@/types/chat";
 import { CitationBadge } from "./CitationCard";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -264,7 +267,11 @@ export function MessageBubble({ message, onCitationClick }: MessageBubbleProps) 
               </div>
             ) : (
               <div className="markdown-content">
-                <ReactMarkdown components={markdownComponents}>
+                <ReactMarkdown
+                  remarkPlugins={[remarkMath]}
+                  rehypePlugins={[rehypeKatex]}
+                  components={markdownComponents}
+                >
                   {message.content || ""}
                 </ReactMarkdown>
                 {isStreaming && (

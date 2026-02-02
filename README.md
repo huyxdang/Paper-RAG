@@ -23,7 +23,7 @@
 
 <p align="center">
   <a href="#overview">Overview</a> •
-  <a href="#rag-flow">RAG Flow</a> •
+  <a href="#rag-workflow">RAG Workflow</a> •
   <a href="#chunk_&_embed">Chunk & Embed </a> •
   <a href="#tech-stack">Tech Stack</a>
 </p>
@@ -38,26 +38,21 @@ It is built upon an **agentic RAG workflow**, combining  Adaptive RAG ([paper](h
 
 Powered by **Mistral models** (Mistral Large, Mistral Small 3.2, Ministral 3B, Mistral Embed), Cohere (Re-ranker) and Tavily (Web-search).
 
-## RAG Flow
+## RAG WorkFlow
 
 <p>
   <img src="public/RAG-flow.jpg" alt="Rag-workflow"/>
 </p>
-
-## Features
-
-- **Streaming Responses** — Real-time token streaming via Server-Sent Events (SSE)
-- **Structured Citations** — Click-to-inspect source cards with relevance scores
-- **Intelligent Routing** — Automatic classification of query intent
-- **Hybrid Search** — Best of semantic understanding + keyword matching
-- **Corrective RAG** — Self-healing pipeline with fallback strategies
-- **Latency Tracking** — Per-step timing metrics in the RAG console
 
 ## Chunk & Embed
 <p>
   <img src="public/chunk_embed.png" alt="chunk-embed"/>
 </p>
 
+## Features
+- **Process Inspector** - users can see what's happening inside the sytem for **transparency**
+- **Citation** - users can view the answer's sources, including "Claim" and the exact Text from documents, for **trust-worthiness**
+- **Agentic RAG** - answers are constantly checked and verified by Mistral-Large to improve **accuracy** and **relevance**
 
 ## Tech Stack
 
