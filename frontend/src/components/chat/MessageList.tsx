@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useEffect } from "react";
+import { useRef, useEffect, useCallback } from "react";
 import type { Message, Citation } from "@/types/chat";
 import { MessageBubble } from "./MessageBubble";
 import { ArrowRight } from "lucide-react";
@@ -15,14 +15,30 @@ interface MessageListProps {
  */
 export function MessageList({ messages, onCitationClick }: MessageListProps) {
   const bottomRef = useRef<HTMLDivElement>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const userScrolledUp = useRef(false);
 
-  // Auto-scroll to bottom when new messages arrive
+  // Detect if user has scrolled up from the bottom
+  const handleScroll = useCallback(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
+    userScrolledUp.current = distanceFromBottom > 100;
+  }, []);
+
+  // Auto-scroll only if user hasn't scrolled up
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+    if (!userScrolledUp.current) {
+      bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+    }
   }, [messages]);
 
   return (
-    <div className="flex-1 overflow-y-auto p-4 sm:p-8 space-y-8 relative z-10 scroll-smooth">
+    <div
+      ref={containerRef}
+      onScroll={handleScroll}
+      className="flex-1 overflow-y-auto p-4 sm:p-8 space-y-8 relative z-10 scroll-smooth"
+    >
       {messages.map((message) => (
         <MessageBubble
           key={message.id}

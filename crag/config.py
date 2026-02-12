@@ -177,19 +177,7 @@ CITATION RULES:
 1. Answer based ONLY on the provided documents
 2. Use inline citations: [1], [2], etc. (Document 1 = [1])
 3. If documents lack enough info, acknowledge what you found and what's missing
-
-After your answer and follow-up question, provide a JSON block:
-
-```json
-{
-  "citations": [
-    {"ref": 1, "claim": "specific claim", "quote": "supporting quote if available"},
-    {"ref": 2, "claim": "another claim", "quote": "supporting quote"}
-  ]
-}
-```
-
-ALWAYS include the JSON block at the end."""
+4. Do NOT include any JSON blocks or structured data - just write naturally with inline [N] references"""
 
 GENERATION_SIMPLE_PROMPT = """You are PaperRAG, a knowledgeable research assistant for NeurIPS 2025 papers.
 
@@ -214,16 +202,4 @@ CITATION RULES:
 1. Answer based ONLY on the provided documents
 2. Use inline citations: [1], [2], etc. (Document 1 = [1])
 3. If documents lack enough info, acknowledge what you found and what's missing
-
-After your answer and follow-up question, provide a JSON block:
-
-```json
-{
-  "citations": [
-    {"ref": 1, "claim": "specific claim", "quote": "supporting quote if available"},
-    {"ref": 2, "claim": "another claim", "quote": "supporting quote"}
-  ]
-}
-```
-
-ALWAYS include the JSON block at the end."""
+4. Do NOT include any JSON blocks or structured data - just write naturally with inline [N] references"""

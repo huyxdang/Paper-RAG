@@ -155,21 +155,23 @@ class CitationExtractor:
         citations = []
         for ref_num in sorted(ref_numbers):
             doc_idx = ref_num - 1  # Convert to 0-based index
-            
+
             # Get claim and quote from JSON if available
             json_cite = next((c for c in json_citations if c.get("ref") == ref_num), {})
             claim = json_cite.get("claim", "")
             quote = json_cite.get("quote", "")
-            
+
             # If no claim from JSON, extract context around the reference
             if not claim:
                 claim = self._extract_claim_context(answer, ref_num)
-            
+
             # Build source info from document
             source = None
+            doc_content = ""
             if 0 <= doc_idx < len(documents):
                 doc = documents[doc_idx]
                 metadata = doc.metadata if hasattr(doc, 'metadata') else {}
+                doc_content = doc.content if hasattr(doc, 'content') else str(doc)
                 source = SourceInfo(
                     title=metadata.get("title", f"Document {ref_num}"),
                     url=metadata.get("url", ""),
@@ -178,7 +180,11 @@ class CitationExtractor:
                     relevance_score=doc.score if hasattr(doc, 'score') else 0.0,
                     doc_index=doc_idx,
                 )
-            
+
+            # If no quote from LLM, extract the most relevant snippet from the source
+            if not quote and doc_content and claim:
+                quote = self._extract_best_snippet(doc_content, claim)
+
             citations.append(Citation(
                 ref=ref_num,
                 claim=claim,
@@ -256,6 +262,48 @@ class CitationExtractor:
         claim = re.sub(rf'\s*{ref_pattern}\s*', ' ', claim).strip()
         return claim
     
+    def _extract_best_snippet(self, doc_content: str, claim: str, max_len: int = 300) -> str:
+        """
+        Extract the most relevant snippet from a document given a claim.
+
+        Uses keyword overlap to find the sentence(s) in the document
+        that best match the claim.
+        """
+        # Split document into sentences
+        sentences = re.split(r'(?<=[.!?])\s+', doc_content.strip())
+        if not sentences:
+            return ""
+
+        # Extract keywords from the claim (words 4+ chars, lowercased)
+        claim_words = set(
+            w.lower() for w in re.findall(r'\b\w{4,}\b', claim)
+        )
+        if not claim_words:
+            # Fall back to first sentence if claim has no meaningful keywords
+            return sentences[0][:max_len]
+
+        # Score each sentence by keyword overlap
+        scored = []
+        for sent in sentences:
+            sent_words = set(w.lower() for w in re.findall(r'\b\w{4,}\b', sent))
+            overlap = len(claim_words & sent_words)
+            if overlap > 0:
+                scored.append((overlap, sent))
+
+        if not scored:
+            # No keyword match — return first sentence as fallback
+            return sentences[0][:max_len]
+
+        # Sort by overlap descending, take the best match
+        scored.sort(key=lambda x: x[0], reverse=True)
+        best = scored[0][1].strip()
+
+        # If the best sentence is short, try to include the next sentence for context
+        if len(best) < 100 and len(scored) > 1:
+            best = best + " " + scored[1][1].strip()
+
+        return best[:max_len]
+
     def generate_with_citations(
         self,
         question: str,

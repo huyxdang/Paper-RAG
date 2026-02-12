@@ -119,11 +119,45 @@ export function MessageBubble({ message, onCitationClick }: MessageBubbleProps) 
     }
   }, [onCitationClick]);
 
+  // Helper function to process children and replace citation references
+  const processChildren = useCallback((children: React.ReactNode): React.ReactNode => {
+    if (!children) return children;
+
+    if (typeof children === "string") {
+      return (
+        <TextWithCitations
+          text={children}
+          citationMap={citationMap}
+          activeCitation={activeCitation}
+          onCitationClick={handleCitationClick}
+        />
+      );
+    }
+
+    if (Array.isArray(children)) {
+      return children.map((child, i) => {
+        if (typeof child === "string") {
+          return (
+            <TextWithCitations
+              key={i}
+              text={child}
+              citationMap={citationMap}
+              activeCitation={activeCitation}
+              onCitationClick={handleCitationClick}
+            />
+          );
+        }
+        return child;
+      });
+    }
+
+    return children;
+  }, [citationMap, activeCitation, handleCitationClick]);
+
   // Custom components for ReactMarkdown that handle citations
   const markdownComponents = useMemo(() => ({
     // Paragraphs with citation handling
     p: ({ children }: { children?: React.ReactNode }) => {
-      // Process children to handle citations in text nodes
       const processedChildren = processChildren(children);
       return <p className="mb-4 last:mb-0">{processedChildren}</p>;
     },
@@ -189,42 +223,7 @@ export function MessageBubble({ message, onCitationClick }: MessageBubbleProps) 
         {children}
       </td>
     ),
-  }), []);
-
-  // Helper function to process children and replace citation references
-  function processChildren(children: React.ReactNode): React.ReactNode {
-    if (!children) return children;
-    
-    if (typeof children === "string") {
-      return (
-        <TextWithCitations
-          text={children}
-          citationMap={citationMap}
-          activeCitation={activeCitation}
-          onCitationClick={handleCitationClick}
-        />
-      );
-    }
-    
-    if (Array.isArray(children)) {
-      return children.map((child, i) => {
-        if (typeof child === "string") {
-          return (
-            <TextWithCitations
-              key={i}
-              text={child}
-              citationMap={citationMap}
-              activeCitation={activeCitation}
-              onCitationClick={handleCitationClick}
-            />
-          );
-        }
-        return child;
-      });
-    }
-    
-    return children;
-  }
+  }), [processChildren]);
 
   return (
     <div className={`flex flex-col max-w-4xl mx-auto ${isUser ? "items-end" : "items-start"}`}>

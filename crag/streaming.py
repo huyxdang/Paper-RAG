@@ -360,53 +360,69 @@ class PipelineStreamer:
                         details={"kept": len(filtered_docs), "needs_web_search": needs_web}
                     )
                     
-                    # If no relevant docs, fall back to web search
+                    # If any docs were irrelevant, supplement with web search
                     if needs_web and not state["web_search_done"]:
                         yield from self._do_web_search(state, timer)
-            
-            # Step 6: Generate answer (streaming with citations)
-            yield from self._generate_streaming(state, timer)
-            
-            # Step 6b: Extract and yield citations if enabled
-            if self.use_citations and state["generation"] and state["documents"]:
-                timer.start()
-                extractor = self._get_citation_extractor()
-                cited_response = extractor.extract_citations_from_text(
-                    state["generation"],
-                    state["documents"]
-                )
-                state["citations"] = [c.to_dict() for c in cited_response.citations]
-                state["generation"] = cited_response.answer  # Clean answer without JSON
-                
-                if state["citations"]:
-                    yield citation_event(state["citations"])
-                    yield status_event(
-                        step="extracting_citations",
-                        latency_ms=timer.elapsed_ms(),
-                        details={"count": len(state["citations"])}
+
+            # Step 6-7: Generate → Grade → retry loop
+            max_attempts = 3
+            for attempt in range(max_attempts):
+                # Step 6: Generate answer (streaming with citations)
+                yield from self._generate_streaming(state, timer)
+
+                # Step 6b: Extract and yield citations if enabled
+                if self.use_citations and state["generation"] and state["documents"]:
+                    timer.start()
+                    extractor = self._get_citation_extractor()
+                    cited_response = extractor.extract_citations_from_text(
+                        state["generation"],
+                        state["documents"]
                     )
-            
-            # Step 7: Grade generation
-            timer.start()
-            if state["documents"] and state["generation"]:
-                doc_texts = "\n\n---\n\n".join(
-                    doc.content if hasattr(doc, 'content') else str(doc)
-                    for doc in state["documents"]
-                )
-                grade = self.gen_grader.grade(doc_texts, state["generation"], question)
-                state["generation_grade"] = grade
-                yield status_event(
-                    step="grading_gen",
-                    latency_ms=timer.elapsed_ms(),
-                    details={"grade": grade}
-                )
-            else:
-                yield status_event(
-                    step="grading_gen",
-                    latency_ms=timer.elapsed_ms(),
-                    details={"skipped": True, "reason": "no docs or generation"}
-                )
-            
+                    state["citations"] = [c.to_dict() for c in cited_response.citations]
+                    state["generation"] = cited_response.answer  # Clean answer without JSON
+
+                    if state["citations"]:
+                        yield citation_event(state["citations"])
+                        yield status_event(
+                            step="extracting_citations",
+                            latency_ms=timer.elapsed_ms(),
+                            details={"count": len(state["citations"])}
+                        )
+
+                # Step 7: Grade generation
+                timer.start()
+                if state["documents"] and state["generation"]:
+                    doc_texts = "\n\n---\n\n".join(
+                        doc.content if hasattr(doc, 'content') else str(doc)
+                        for doc in state["documents"]
+                    )
+                    grade = self.gen_grader.grade(doc_texts, state["generation"], question)
+                    state["generation_grade"] = grade
+                    yield status_event(
+                        step="grading_gen",
+                        latency_ms=timer.elapsed_ms(),
+                        details={"grade": grade}
+                    )
+
+                    # If grounded and answers question, we're done
+                    if grade == "useful":
+                        break
+
+                    # If not useful and web search not done, retry via web search
+                    if not state["web_search_done"]:
+                        yield from self._do_web_search(state, timer)
+                        continue  # Retry generation with web results
+
+                    # Web search already done, accept degraded answer
+                    break
+                else:
+                    yield status_event(
+                        step="grading_gen",
+                        latency_ms=timer.elapsed_ms(),
+                        details={"skipped": True, "reason": "no docs or generation"}
+                    )
+                    break
+
             # Done
             yield done_event(
                 session_id=session_id,
