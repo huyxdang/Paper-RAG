@@ -287,6 +287,7 @@ class PipelineStreamer:
             "web_search_done": False,
             "generation_grade": None,
             "citations": [],
+            "history": history,
         }
         
         try:
@@ -492,29 +493,33 @@ class PipelineStreamer:
     ) -> Generator[StreamEvent, None, None]:
         """
         Generate a friendly conversational response using ministral-3b.
-        
+
         Used for greetings, off-topic queries, and capability questions.
         Skips retrieval and citation extraction entirely.
         """
         timer.start()
-        
+
         yield status_event(
             step="generating",
             latency_ms=0,
             details={"status": "starting", "mode": "conversational"}
         )
-        
+
         client = self._get_mistral()
         full_response = ""
         token_count = 0
-        
+
+        # Build messages with conversation history
+        history = state.get("history", [])
+        messages = [{"role": "system", "content": CONVERSATIONAL_SYSTEM_PROMPT}]
+        for msg in history[-6:]:
+            messages.append({"role": msg.get("role", "user"), "content": msg.get("content", "")[:500]})
+        messages.append({"role": "user", "content": question})
+
         try:
             stream = client.chat.stream(
                 model=CONVERSATIONAL_MODEL,
-                messages=[
-                    {"role": "system", "content": CONVERSATIONAL_SYSTEM_PROMPT},
-                    {"role": "user", "content": question}
-                ],
+                messages=messages,
                 temperature=0.7,
                 max_tokens=500,
             )
@@ -538,6 +543,17 @@ class PipelineStreamer:
             yield error_event(f"Conversational generation failed: {str(e)}", step="generating")
             state["generation"] = "I'm having trouble responding right now. How can I help you with NeurIPS 2025 research?"
     
+    def _format_history_for_generation(self, history: List[Message]) -> str:
+        """Format conversation history for the generation prompt."""
+        if not history:
+            return ""
+        parts = []
+        for msg in history[-6:]:  # Last 3 turns
+            role = msg.get("role", "user").capitalize()
+            content = msg.get("content", "")[:500]
+            parts.append(f"{role}: {content}")
+        return "\n".join(parts)
+
     def _generate_streaming(
         self,
         state: dict,
@@ -545,9 +561,10 @@ class PipelineStreamer:
     ) -> Generator[StreamEvent, None, None]:
         """Generate answer with token streaming."""
         timer.start()
-        
+
         documents = state["documents"]
         question = state["question"]
+        history = state.get("history", [])
         
         # If no documents, generate a "no context" response
         if not documents:
@@ -580,7 +597,10 @@ class PipelineStreamer:
         else:
             system_prompt = GENERATION_SIMPLE_PROMPT
 
-        context_prompt = f"""## Retrieved Documents:
+        history_text = self._format_history_for_generation(history)
+        history_section = f"## Conversation History:\n{history_text}\n\n" if history_text else ""
+
+        context_prompt = f"""{history_section}## Retrieved Documents:
 {context}
 
 ## User Question:

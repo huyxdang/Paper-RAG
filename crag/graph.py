@@ -256,22 +256,34 @@ def create_crag_graph(
             "web_search_done": True  # Mark that we've done web search
         }
     
+    def format_history(history: list) -> str:
+        """Format conversation history for generation prompts."""
+        if not history:
+            return ""
+        parts = []
+        for msg in history[-6:]:
+            role = msg.get("role", "user").capitalize()
+            content = msg.get("content", "")[:500]
+            parts.append(f"{role}: {content}")
+        return "\n".join(parts)
+
     def generate(state: GraphState) -> GraphState:
         """Generate answer from documents and question."""
         print("---GENERATING ANSWER---")
         question = state["question"]
         documents = state["documents"]
+        history = state.get("history", [])
         attempts = state.get("generation_attempts", 0)
-        
+
         # Format documents as context
         context_parts = []
         for i, doc in enumerate(documents):
             source = doc.source if hasattr(doc, 'source') else "vectorstore"
             content = doc.content if hasattr(doc, 'content') else str(doc)
             context_parts.append(f"[Document {i+1}] ({source})\n{content}")
-        
+
         context = "\n\n---\n\n".join(context_parts)
-        
+
         system_prompt = """You are a helpful assistant answering questions based on the provided documents.
 
 Instructions:
@@ -280,7 +292,10 @@ Instructions:
 - Be concise and accurate
 - Cite relevant document numbers when possible (e.g., "According to [Document 1]...")"""
 
-        user_prompt = f"""## Context Documents:
+        history_text = format_history(history)
+        history_section = f"## Conversation History:\n{history_text}\n\n" if history_text else ""
+
+        user_prompt = f"""{history_section}## Context Documents:
 {context}
 
 ## Question:
@@ -336,23 +351,27 @@ Instructions:
     def generate_conversational(state: GraphState) -> GraphState:
         """
         Generate a friendly response for non-research queries.
-        
+
         Uses ministral-3b for fast, simple conversational responses.
         Skips retrieval, grading, and citation extraction.
         """
         print("---GENERATING CONVERSATIONAL RESPONSE---")
         question = state.get("rewritten_query") or state["question"]
-        
+        history = state.get("history", [])
+
         # Use ministral-3b for fast conversational responses
         api_key = os.getenv("MISTRAL_API_KEY")
         client = Mistral(api_key=api_key)
-        
+
+        # Build messages with conversation history
+        messages = [{"role": "system", "content": CONVERSATIONAL_SYSTEM_PROMPT}]
+        for msg in history[-6:]:
+            messages.append({"role": msg.get("role", "user"), "content": msg.get("content", "")[:500]})
+        messages.append({"role": "user", "content": question})
+
         response = client.chat.complete(
             model=CONVERSATIONAL_MODEL,
-            messages=[
-                {"role": "system", "content": CONVERSATIONAL_SYSTEM_PROMPT},
-                {"role": "user", "content": question}
-            ],
+            messages=messages,
             temperature=0.7,
             max_tokens=500,
         )
