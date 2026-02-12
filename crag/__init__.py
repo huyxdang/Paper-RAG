@@ -73,7 +73,6 @@ from .config import (
     GEN_GRADER_SYSTEM_PROMPT,
     GENERATION_SYSTEM_PROMPT,
     GENERATION_SIMPLE_PROMPT,
-    CITATION_SYSTEM_PROMPT,
 )
 from .graph_state import Message
 from .graph import (
@@ -142,7 +141,6 @@ __all__ = [
     "GEN_GRADER_SYSTEM_PROMPT",
     "GENERATION_SYSTEM_PROMPT",
     "GENERATION_SIMPLE_PROMPT",
-    "CITATION_SYSTEM_PROMPT",
     # Graph
     "create_crag_graph",
     "compile_crag_graph",

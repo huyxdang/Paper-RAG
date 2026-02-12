@@ -24,7 +24,7 @@ import json
 from dataclasses import dataclass, field, asdict
 from typing import List, Optional, Dict, Any, Tuple
 
-from .config import CITATION_SYSTEM_PROMPT
+from .config import GENERATION_SYSTEM_PROMPT
 
 
 # ============== Data Classes ==============
@@ -82,7 +82,7 @@ class CitedResponse:
 
 # ============== Citation Prompts ==============
 
-# CITATION_SYSTEM_PROMPT is imported from config.py
+# GENERATION_SYSTEM_PROMPT is imported from config.py
 
 CITATION_USER_PROMPT = """## Documents:
 
@@ -355,7 +355,7 @@ class CitationExtractor:
         response = client.chat.complete(
             model=self.model,
             messages=[
-                {"role": "system", "content": CITATION_SYSTEM_PROMPT},
+                {"role": "system", "content": GENERATION_SYSTEM_PROMPT},
                 {"role": "user", "content": CITATION_USER_PROMPT.format(
                     context=context,
                     question=question,
@@ -424,7 +424,7 @@ class CitationExtractor:
         stream = client.chat.stream(
             model=self.model,
             messages=[
-                {"role": "system", "content": CITATION_SYSTEM_PROMPT},
+                {"role": "system", "content": GENERATION_SYSTEM_PROMPT},
                 {"role": "user", "content": CITATION_USER_PROMPT.format(
                     context=context,
                     question=question,
